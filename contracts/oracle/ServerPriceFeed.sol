@@ -17,8 +17,8 @@ contract ServerPriceFeed is IServerPriceFeed, Ownable {
 
     //parameters for sign update
     uint256 public updateTimeTolerance = 15;
+    uint256 private updateCode;
     mapping(address => bool) public isUpdater;
-    mapping(address => uint256) private signUpdaterCode;
     mapping(address => uint256) private updateTime;
 
     //setting for token
@@ -55,8 +55,8 @@ contract ServerPriceFeed is IServerPriceFeed, Ownable {
     function setUpdater(address _account, bool _isActive) external onlyOwner {
         isUpdater[_account] = _isActive;
     }
-    function setSignPrefixCode(address _updater, uint256 _setCode) external onlyOwner {
-        signUpdaterCode[_updater] = _setCode;
+    function setSignPrefixCode(uint256 _setCode) external onlyOwner {
+        updateCode = _setCode;
     }
 
     //paras. for trade
@@ -137,7 +137,6 @@ contract ServerPriceFeed is IServerPriceFeed, Ownable {
     function _setPricesWithBits(uint256[] memory _priceBits, uint256 _timestamp) private {
         uint256 roundId = _batchRoundId.current();
         _batchRoundId.increment();
-
         uint256 bitsMaxLength = 8;
         for (uint256 i = 0; i < _priceBits.length; i++) {
             uint256 priceBits = _priceBits[i];
@@ -151,7 +150,7 @@ contract ServerPriceFeed is IServerPriceFeed, Ownable {
                 uint256 startBit = 32 * j;
                 uint256 price = (priceBits >> startBit) & BITMASK_32;
                 address token = tokens[tokenIndex];
-                require(_timestamp >= updateTime[token], "data out of time");
+                require(_timestamp > updateTime[token], "data out of time");
                 updateTime[token] = _timestamp;
                 uint256 tokenPrecision = tokenPrecisions[tokenIndex];
                 uint256 adjustedPrice = price.mul(PRICE_PRECISION).div(
@@ -201,9 +200,9 @@ contract ServerPriceFeed is IServerPriceFeed, Ownable {
     function VerifyFull(address _updater, address _token, uint256[] memory _priceBits, uint256 _priceTimestamp, bytes memory _updaterSignedMsg) public view returns (bool) {
         if (updateTimeTolerance > 0)
             require(_priceTimestamp <= block.timestamp && block.timestamp.sub(_priceTimestamp) < updateTimeTolerance, "time tollarance reached.");
-        bytes memory content = abi.encodePacked(signUpdaterCode[_updater], _updater, _token, _priceTimestamp);
+        bytes memory content = abi.encodePacked(updateCode, _updater, _token, _priceTimestamp);
         for(uint8 i = 0; i < _priceBits.length; i++){
-            content =  abi.encodePacked(content, _priceBits[i]);//, "."
+            content =  abi.encodePacked(content, _priceBits[i]);
         }
         bytes32 _calHash = keccak256(content);
         bytes32 ethSignedHash = keccak256(abi.encodePacked(prefix, _calHash));
@@ -213,9 +212,9 @@ contract ServerPriceFeed is IServerPriceFeed, Ownable {
     function VerifyBits(address _updater, uint256[] memory _priceBits, uint256 _priceTimestamp, bytes memory _updaterSignedMsg) public view returns (bool) {
         if (updateTimeTolerance > 0)
             require(_priceTimestamp <= block.timestamp && block.timestamp.sub(_priceTimestamp) < updateTimeTolerance, "time tollarance reached.");
-        bytes memory content = abi.encodePacked(signUpdaterCode[_updater], _updater, _priceTimestamp);
+        bytes memory content = abi.encodePacked(updateCode, _updater, _priceTimestamp);
         for(uint8 i = 0; i < _priceBits.length; i++){
-            content =  abi.encodePacked(content, _priceBits[i]);//, "."
+            content =  abi.encodePacked(content, _priceBits[i]);
         }
         bytes32 _calHash = keccak256(content);
         bytes32 ethSignedHash = keccak256(abi.encodePacked(prefix, _calHash));
@@ -226,7 +225,7 @@ contract ServerPriceFeed is IServerPriceFeed, Ownable {
     function VerifySingle(address _updater, address _token, uint256 _price, uint8 _priceType, uint256 _priceTimestamp, bytes memory _updaterSignedMsg) public view returns (bool) {
         if (updateTimeTolerance > 0)
             require(_priceTimestamp <= block.timestamp && block.timestamp.sub(_priceTimestamp) < updateTimeTolerance, "time tollarance reached.");
-        bytes memory content = abi.encodePacked(signUpdaterCode[_updater], _updater, _priceTimestamp, _token, _price, _priceType);
+        bytes memory content = abi.encodePacked(updateCode, _updater, _priceTimestamp, _token, _price, _priceType);
         bytes32 _calHash = keccak256(content);
         bytes32 ethSignedHash = keccak256(abi.encodePacked(prefix, _calHash));
         return isUpdater[recoverSigner(ethSignedHash, _updaterSignedMsg)];

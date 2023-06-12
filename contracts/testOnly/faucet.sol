@@ -18,10 +18,7 @@ contract Faucet is Ownable {
 
     FaucetToken[] public supportedTokens;
 
-    function addTokens(address[] memory tokens, uint256[] memory amounts)
-        public
-        onlyOwner
-    {
+    function addTokens(address[] memory tokens, uint256[] memory amounts)public onlyOwner{
         for (uint256 i = 0; i < tokens.length; i++) {
             addToken(tokens[i], amounts[i]);
         }

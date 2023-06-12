@@ -3,11 +3,15 @@
 pragma solidity ^0.8.0;
 
 library Array {
-    function get(bytes32[] memory arr, uint256 index) internal pure returns (bytes32) {
+    function getSafe(bytes32[] memory arr, uint256 index) internal pure returns (bytes32) { 
+        require(index < arr.length,"Exceed the range of arry");
+        return arr[index];
+    }
+
+    function get(bytes32[] memory arr, uint256 index) internal pure returns (bytes32) { 
         if (index < arr.length) {
             return arr[index];
         }
-
         return bytes32(0);
     }
 

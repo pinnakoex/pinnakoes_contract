@@ -13,7 +13,6 @@ library VaultMSData {
     uint256 constant HOUR_RATE_PRECISION = 10**6; //for common rate(leverage, etc.) and hourly rate
     uint256 constant PRC_RATE_PRECISION = 10**10;   //for precise rate  secondly rate
     uint256 constant PRICE_PRECISION = 10**30;
-    uint256 constant USDX_DECIMALS = 10 ** 18;
 
     struct Position {
         address account;
@@ -49,7 +48,7 @@ library VaultMSData {
         bool isFundable;
         bool isStable;
         uint256 weight;  //tokenWeights allows customisation of index composition
-        uint256 maxUSDAmounts;  // maxUSDAmounts allows setting a max amount of USDX debt for a token
+        uint256 maxUSDAmounts;  
 
         //Record only
         uint256 balance;        // tokenBalances is used only to determine _transferIn values

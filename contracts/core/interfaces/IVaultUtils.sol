@@ -20,7 +20,8 @@ interface IVaultUtils {
 
     function getReserveDelta(address _collateralToken, uint256 _sizeUSD, uint256 _colUSD, uint256 _takeProfitRatio) external view returns (uint256);
     function getInitialPosition(address _account, address _collateralToken, address _indexToken, uint256 _sizeDelta, bool _isLong, uint256 _price) external view returns (VaultMSData.Position memory);
-    function getDelta(address _indexToken, uint256 _size, uint256 _averagePrice, bool _isLong, uint256 _lastIncreasedTime, uint256 _colSize) external view returns (bool, uint256);
+    // function getDelta(address _indexToken, uint256 _size, uint256 _averagePrice, bool _isLong, uint256 _lastIncreasedTime, uint256 _colSize) external view returns (bool, uint256);
+    function getDelta(VaultMSData.Position memory _position, uint256 _price) external view returns (bool, uint256);
     function updateRate(address _token) external view returns (VaultMSData.TradingFee memory);
     function getPremiumFee(VaultMSData.Position memory _position, VaultMSData.TradingFee memory _tradingFee) external view returns (int256);
     // function getPremiumFee(address _indexToken, bool _isLong, uint256 _size, int256 _entryPremiumRate) external view returns (int256);
@@ -90,11 +91,9 @@ interface IVaultUtils {
         uint256 _stableSwapFeeBasisPoints,
         uint256 _marginFeeBasisPoints,
         uint256 _liquidationFeeUsd,
-        uint256 _minProfitTime,
         bool _hasDynamicFees
     ) external;
     
-    function getTradingTax(address _token) external view returns (VaultMSData.TradingTax memory);
     function tokenUtilization(address _token) external view returns (uint256);
     function getTargetUsdAmount(address _token) external view returns (uint256);
     function setInPrivateLiquidationMode(bool _inPrivateLiquidationMode) external;

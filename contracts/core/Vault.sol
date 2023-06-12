@@ -5,19 +5,18 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "../tokens/interfaces/IMintable.sol";
 import "../utils/EnumerableValues.sol";
 import "./VaultMSData.sol";
 import "./interfaces/IVault.sol";
 import "./interfaces/IVaultUtils.sol";
-import "../oracle/interfaces/IVaultPriceFeedV3Fast.sol";
+import "../oracle/interfaces/IVaultPriceFeed.sol";
 import "./interfaces/IVaultStorage.sol";
-import "../DID/interfaces/IPSBT.sol";
-import "./interfaces/IFeeRouter.sol";
+import "../DID/interfaces/IPID.sol";
+import "../fee/interfaces/IUserFeeResv.sol";
 
-contract Vault is ReentrancyGuard, IVault, Ownable {
+contract Vault is IVault, Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.Bytes32Set;
@@ -27,12 +26,13 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
 
     uint8 public override baseMode;
 
-    IPSBT public psbt;
+    IPID public pid;
     IVaultUtils public vaultUtils;
     address public override vaultStorage;
     address public override priceFeed;
-    address public override usdx;
     address public feeRouter;
+    address public userFeeResv;
+    address public feeOutToken;
 
     mapping(address => bool) public override isManager;
     mapping(address => bool) public override approvedRouters;
@@ -40,16 +40,9 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     uint256 public override totalTokenWeights;
     EnumerableSet.AddressSet tradingTokens;
     EnumerableSet.AddressSet fundingTokens;
+    EnumerableSet.AddressSet allTokens;
     mapping(address => VaultMSData.TokenBase) tokenBase;
-    mapping(address => uint256) public override usdxAmounts;     // usdxAmounts tracks the amount of USDX debt for each whitelisted token
-    mapping(address => uint256) public override guaranteedUsd;
-
-    //Fee parameters
-    // address public feeToken;
-    // uint256 public feeReservesAmount;
-    // uint256 public feeReservesDiscountedUSD;
-    // mapping(uint256 => uint256) public override feeReservesRecord;  //recorded by timestamp/24hours
-
+    uint256 public override guaranteedUsd;
 
     mapping(address => VaultMSData.TradingFee) tradingFee;
     mapping(bytes32 => VaultMSData.Position) positions;
@@ -64,7 +57,7 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     }
 
     event Swap(address account, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 amountOutAfterFees, uint256 feeBasisPoints);
-    event IncreasePosition(bytes32 key, address account, address collateralToken, address indexToken, uint256 collateralDelta, uint256 sizeDelta,bool isLong, uint256 price, int256 fee);
+    event IncreasePosition(bytes32 key, address account, address collateralToken, address indexToken, uint256 collateralDelta, uint256 sizeDelta,bool isLong, uint256 price, uint256 fee);
     event DecreasePosition(bytes32 key, VaultMSData.Position position, uint256 collateralDelta, uint256 sizeDelta, uint256 price, int256 fee, uint256 usdOut, uint256 latestCollatral, uint256 prevCollateral);
     event DecreasePositionTransOut( bytes32 key,uint256 transOut);
     event LiquidatePosition(bytes32 key, address account, address collateralToken, address indexToken, bool isLong, uint256 size, uint256 collateral, uint256 reserveAmount, int256 realisedPnl, uint256 markPrice);
@@ -73,7 +66,7 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     event UpdateFundingRate(address token, uint256 fundingRate);
     event UpdatePnl(bytes32 key, bool hasProfit, uint256 delta, uint256 currentSize, uint256 currentCollateral, uint256 usdOut, uint256 usdOutAfterFee);
     event CollectSwapFees(address token, uint256 feeUsd, uint256 feeTokens);
-    event CollectMarginFees(address token, uint256 feeUsd, uint256 feeTokens);
+    event CollectMarginFees(address token, uint256 feeUsd, uint256 feeTokens, uint256 feeTokenDisc);
     event DirectPoolDeposit(address token, uint256 amount);
     event IncreasePoolAmount(address token, uint256 amount);
     event DecreasePoolAmount(address token, uint256 amount);
@@ -84,31 +77,40 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     // event PayTax(address _account, bytes32 _key, uint256 profit, uint256 usdTax);
     // event UpdateGlobalSize(address _indexToken, uint256 tokenSize, uint256 globalSize, uint256 averagePrice, bool _increase, bool _isLong );
     event CollectPremiumFee(address account,uint256 _size, int256 _entryPremiumRate, int256 _premiumFeeUSD);
+    event SetManager(address account, bool state);
+    event SetRouter(address account, bool state);
+    event SetTokenConfig(address _token, uint256 _tokenWeight, bool _isStable, bool _isFundingToken, bool _isTradingToken);
+    event ClearTokenConfig(address _token, bool del);
 
-    function initialize( address _usdx, address _priceFeed, uint8 _baseMode) external onlyOwner{
-        require(baseMode==0, "i0");
-        usdx = _usdx;
-        priceFeed = _priceFeed;
-        require(_baseMode > 0 && _baseMode < 4, "I1");
+    constructor(uint8 _baseMode) {
         baseMode = _baseMode;
     }
+
     // ---------- owner setting part ----------
-    function setAdd(address[] memory _addList) external onlyOwner{
+    function setAdd(address[] memory _addList) external override onlyOwner{
         vaultUtils = IVaultUtils(_addList[0]);
         vaultStorage = _addList[1];
-        psbt = IPSBT(_addList[2]);
+        pid = IPID(_addList[2]);
         priceFeed = _addList[3];
         feeRouter = _addList[4];
+        userFeeResv = _addList[5];
+        feeOutToken = _addList[6];
     }
+
     function setManager(address _manager, bool _isManager) external override onlyOwner{
         isManager[_manager] = _isManager;
+        emit SetManager(_manager, _isManager);
     }
 
     function setRouter(address _router, bool _status) external override onlyOwner{
         approvedRouters[_router] = _status;
+        emit SetRouter(_router, _status);
     }
 
     function setTokenConfig(address _token, uint256 _tokenWeight, bool _isStable, bool _isFundingToken, bool _isTradingToken) external override onlyOwner{
+        if (!allTokens.contains(_token)){
+            allTokens.add(_token);
+        }
         if (_isTradingToken && !tradingTokens.contains(_token)) {
             tradingTokens.add(_token);
         }
@@ -127,6 +129,7 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
         tBase.isStable = _isStable;
         tBase.isFundable = _isFundingToken;
         getMaxPrice(_token);// validate price feed
+        emit SetTokenConfig(_token, _tokenWeight, _isStable, _isFundingToken, _isTradingToken);
     }
 
     function clearTokenConfig(address _token, bool _del) external onlyOwner{
@@ -136,57 +139,61 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
         if (fundingTokens.contains(_token)) {
             totalTokenWeights = totalTokenWeights.sub(tokenBase[_token].weight);
             fundingTokens.remove(_token);
-        }  
+        } 
+        if (allTokens.contains(_token)){
+            allTokens.remove(_token);
+        } 
         if (_del)
             delete tokenBase[_token];
+        emit ClearTokenConfig(_token, _del);
     }
     // the governance controlling this function should have a timelock
     function upgradeVault(address _newVault, address _token, uint256 _amount) external onlyOwner{
         IERC20(_token).safeTransfer(_newVault, _amount);
     }
-
     //---------- END OF owner setting part ----------
 
 
 
     //---------- FUNCTIONS FOR MANAGER ----------
-    function buyUSD(address _token) external override nonReentrant onlyManager returns (uint256) {
+    function buyUSD(address _token) external override onlyManager returns (uint256) {
         _validate(fundingTokens.contains(_token), 16);
+        updateRate(_token);//update first to calculate fee
         uint256 tokenAmount = _transferIn(_token);
         _validate(tokenAmount > 0, 17);
-        updateRate(_token);
+        _increasePoolAmount(_token, tokenAmount);
+        
         uint256 feeBasisPoints = vaultUtils.getBuyLpFeeBasisPoints(_token, tokenToUsdMin(_token, tokenAmount));
         uint256 amountAfterFees = _collectSwapFees(_token, tokenAmount, feeBasisPoints);
-        //- fee transfered out inside _collectSwapFees
-        _increasePoolAmount(_token, amountAfterFees);
+        updateRate(_token);//update first to calculate fee
+
         return tokenToUsdMin(_token, amountAfterFees);
     }
 
-    function sellUSD(address _token, address _receiver,  uint256 _usdAmount) external override nonReentrant onlyManager returns (uint256) {
+    function sellUSD(address _token, address _receiver,  uint256 _usdAmount) external override onlyManager returns (uint256) {
         _validate(fundingTokens.contains(_token), 19);
         _validate(_usdAmount > 0, 20);
         updateRate(_token);
         uint256 redemptionAmount = usdToTokenMin(_token, _usdAmount);
         _validate(redemptionAmount > 0, 21);
-        _decreasePoolAmount(_token, redemptionAmount);
         uint256 feeBasisPoints = vaultUtils.getSellLpFeeBasisPoints(_token, _usdAmount);
-        //- fee transfered out inside _collectSwapFees
         uint256 amountOut = _collectSwapFees(_token, redemptionAmount, feeBasisPoints);
         _validate(amountOut > 0, 22);
+        _decreasePoolAmount(_token, amountOut);
         _transferOut(_token, amountOut, _receiver);
-        updateRate(_token);
+        updateRate(_token);//update first to calculate fee
+
         return amountOut;
     }
 
 
     //---------------------------------------- TRADING FUNCTIONS --------------------------------------------------
-    function swap(address _tokenIn,  address _tokenOut, address _receiver ) external override nonReentrant returns (uint256) {
+    function swap(address _tokenIn,  address _tokenOut, address _receiver ) external override returns (uint256) {
         _validate(approvedRouters[msg.sender], 41);
-        // _validate(IVaultStorage(vaultStorage).isSwapEnabled(), 23); redundent
         return _swap(_tokenIn, _tokenOut, _receiver );
     }
 
-    function increasePosition(address _account, address _collateralToken, address _indexToken, uint256 _sizeDelta, bool _isLong) external override nonReentrant {
+    function increasePosition(address _account, address _collateralToken, address _indexToken, uint256 _sizeDelta, bool _isLong) external override {
         _validate(approvedRouters[msg.sender], 41);
         
         //update cumulative funding rate
@@ -221,7 +228,7 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
         _increasePoolAmount(_collateralToken,  collateralDelta);//aum = pool + aveProfit - guaranteedUsd
         
         //call updateRate before collect Margin Fees
-        int256 fee = _collectMarginFees(key, _sizeDelta); //increase collateral before collectMarginFees
+        uint256 fee = _collectMarginFees(key, _sizeDelta); //increase collateral before collectMarginFees
         position.lastUpdateTime = block.timestamp;//attention: after _collectMarginFees
         
         // run after collectMarginFees
@@ -257,8 +264,8 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     }
 
     function decreasePosition(address _account, address _collateralToken, address _indexToken, uint256 _collateralDelta, uint256 _sizeDelta, bool _isLong, address _receiver
-        ) external override nonReentrant returns (uint256) {
-        _validate(approvedRouters[msg.sender] || _account == msg.sender, 41);
+        ) external override returns (uint256) {
+        _validate(approvedRouters[msg.sender], 41);
         bytes32 key = vaultUtils.getPositionKey(_account, _collateralToken, _indexToken, _isLong, 0);
         return _decreasePosition(key, _collateralDelta, _sizeDelta, _receiver);
     }
@@ -269,23 +276,19 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
         vaultUtils.validateDecreasePosition(position,_sizeDelta, _collateralDelta);
         _updateGlobalSize(position.isLong, position.indexToken, _sizeDelta, position.averagePrice, false);
         uint256 collateral = position.collateral;
+        updateRate(position.collateralToken);
+        if (position.indexToken!= position.collateralToken) updateRate(position.indexToken); 
+        uint256 price = position.isLong ? getMinPrice(position.indexToken) : getMaxPrice(position.indexToken);
+        // _collectMarginFees runs inside _reduceCollateral
+        (uint256 usdOut, uint256 usdOutAfterFee) = _reduceCollateral(key, _collateralDelta, _sizeDelta, price);
         // scrop variables to avoid stack too deep errors
         {
             uint256 reserveDelta = vaultUtils.getReserveDelta(position.collateralToken, position.size.sub(_sizeDelta), position.collateral.sub(_collateralDelta), position.takeProfitRatio);
-            // uint256 reserveDelta = position.reserveAmount.mul(_sizeDelta).div(position.size);
             _decreaseReservedAmount(position.collateralToken, position.reserveAmount);
             if (reserveDelta > 0) _increaseReservedAmount(position.collateralToken, reserveDelta);
             position.reserveAmount = reserveDelta;//position.reserveAmount.sub(reserveDelta);
         }
-        updateRate(position.collateralToken);
-        if (position.indexToken!= position.collateralToken) updateRate(position.indexToken); 
-        
-        uint256 price = position.isLong ? getMinPrice(position.indexToken) : getMaxPrice(position.indexToken);
 
-        // _collectMarginFees runs inside _reduceCollateral
-        (uint256 usdOut, uint256 usdOutAfterFee) = _reduceCollateral(key, _collateralDelta, _sizeDelta, price);
-        
-    
         // update position entry rate
         position.lastUpdateTime = block.timestamp;  //attention: MUST run after _collectMarginFees (_reduceCollateral)
         position.entryFundingRateSec = tradingFee[position.collateralToken].accumulativefundingRateSec;
@@ -305,6 +308,7 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
             } else {
                 emit ClosePosition(key, position.account,
                     position.size, position.collateral,position.averagePrice, position.entryFundingRateSec.mul(3600).div(1000000), position.reserveAmount, position.realisedPnl);
+                _decreaseReservedAmount(position.collateralToken, position.reserveAmount);
                 position.size = 0;
                 _del = true;
             }
@@ -328,10 +332,10 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
 
 
 
-    function liquidatePosition(address _account, address _collateralToken, address _indexToken, bool _isLong, address _feeReceiver) external override nonReentrant {
+    function liquidatePosition(address _account, address _collateralToken, address _indexToken, bool _isLong, address _feeReceiver) external override {
         vaultUtils.validLiq(msg.sender);
-        // updateRate(_collateralToken);
-        // if (_indexToken!= _collateralToken) updateRate(_indexToken);
+        updateRate(_collateralToken);
+        if (_indexToken!= _collateralToken) updateRate(_indexToken);
         bytes32 key = vaultUtils.getPositionKey(_account, _collateralToken, _indexToken, _isLong, 0);
 
         VaultMSData.Position memory position = positions[key];
@@ -346,15 +350,15 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
         }
 
         {
-            uint256 liqMarginFee = position.collateral;
+            uint256 liqMarginFeeUsd = position.collateral;
             if (idxFee >= 0){
-                liqMarginFee = liqMarginFee.add(uint256(idxFee));
+                liqMarginFeeUsd = liqMarginFeeUsd.add(uint256(idxFee));
             }else{
-                liqMarginFee = liqMarginFee > uint256(-idxFee) ? liqMarginFee.sub(uint256(-idxFee)) : 0;
+                liqMarginFeeUsd = liqMarginFeeUsd > uint256(-idxFee) ? liqMarginFeeUsd.sub(uint256(-idxFee)) : 0;
             }
             
-            liqMarginFee = liqMarginFee > marginFees ? marginFees : 0;
-            _collectFeeResv(_account, _collateralToken, liqMarginFee, usdToTokenMin(_collateralToken, liqMarginFee));
+            liqMarginFeeUsd = liqMarginFeeUsd > marginFees ? marginFees : 0;
+            _collectFeeResv(_account, feeOutToken, liqMarginFeeUsd);
         }
 
         uint256 markPrice = _isLong ? getMinPrice(_indexToken)  : getMaxPrice(_indexToken);
@@ -382,11 +386,11 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     }
     
     //---------- PUBLIC FUNCTIONS ----------
-    function directPoolDeposit(address _token) external override nonReentrant {
+    function directPoolDeposit(address _token) external override {
         _validate(fundingTokens.contains(_token), 14);
         uint256 tokenAmount = _transferIn(_token);
         _validate(tokenAmount > 0, 15);
-        // _increasePoolAmount(_token, tokenAmount);
+        _increasePoolAmount(_token, tokenAmount);
         emit DirectPoolDeposit(_token, tokenAmount);
     }
     function tradingTokenList() external view override returns (address[] memory) {
@@ -395,27 +399,12 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     function fundingTokenList() external view override returns (address[] memory) {
         return fundingTokens.valuesAt(0, fundingTokens.length());
     }
-    // function claimableFeeReserves() external view override returns (uint256) {
-    //     return feeReservesUSD.sub(feeReservesDiscountedUSD).sub(feeClaimedUSD);
-    // }
     function getMaxPrice(address _token) public view override returns (uint256) {
-        return IVaultPriceFeedV3Fast(priceFeed).getPrice(_token, true, false, false);
+        return IVaultPriceFeed(priceFeed).getPrice(_token, true, false, false);
     }
     function getMinPrice(address _token) public view override returns (uint256) {
-        return IVaultPriceFeedV3Fast(priceFeed).getPrice(_token, false, false, false);
+        return IVaultPriceFeed(priceFeed).getPrice(_token, false, false, false);
     }
-
-    function getRedemptionCollateral(address _token) public view returns (uint256) {
-        if (tokenBase[_token].isStable) {
-            return tokenBase[_token].poolAmount;
-        }
-        uint256 collateral = usdToTokenMin(_token, guaranteedUsd[_token]);
-        return collateral.add(tokenBase[_token].poolAmount).sub(tokenBase[_token].reservedAmount);
-    }
-    function getRedemptionCollateralUsd(address _token) public view returns (uint256) {
-        return tokenToUsdMin(_token, getRedemptionCollateral(_token));
-    }
-
     function tokenToUsdMin(address _token, uint256 _tokenAmount) public view override returns (uint256) {
         uint256 price = getMinPrice(_token);
         return _tokenAmount.mul(price).div(10**IMintable(_token).decimals());
@@ -484,26 +473,25 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
         uint256 _amountOut = usdToTokenMin(_tokenOut, _amountInUsd);
         uint256 feeBasisPoints = vaultUtils.getSwapFeeBasisPoints(_tokenIn, _tokenOut, _amountInUsd);
         uint256 _amountOutAfterFee = _collectSwapFees(_tokenOut, _amountOut, feeBasisPoints);
-        _decreasePoolAmount(_tokenOut, _amountOut);
+        _decreasePoolAmount(_tokenOut, _amountOutAfterFee);
         _validatePRA(_tokenOut);
         _transferOut(_tokenOut, _amountOutAfterFee, _receiver);
-        updateRate(_tokenIn);
-        updateRate(_tokenOut);
         emit Swap( _receiver, _tokenIn, _tokenOut, amountIn, _amountOut, _amountOutAfterFee, feeBasisPoints);
         return _amountOutAfterFee;
     }
 
 
-    function _reduceCollateral(bytes32 _key, uint256 _collateralDelta, uint256 _sizeDelta, uint256 /*_price*/) private returns (uint256, uint256) {
+    function _reduceCollateral(bytes32 _key, uint256 _collateralDelta, uint256 _sizeDelta, uint256 _price) private returns (uint256, uint256) {
         VaultMSData.Position storage position = positions[_key];
 
-        int256 fee = _collectMarginFees(_key, _sizeDelta);//collateral size updated in _collectMarginFees
+        uint256 fee = _collectMarginFees(_key, _sizeDelta);//collateral size updated in _collectMarginFees
         
         // scope variables to avoid stack too deep errors
         bool hasProfit;
         uint256 adjustedDelta;
         {
-            (bool _hasProfit, uint256 delta) = vaultUtils.getDelta(position.indexToken, position.size, position.averagePrice, position.isLong, position.aveIncreaseTime, position.collateral);
+            // (bool _hasProfit, uint256 delta) = vaultUtils.getDelta(position.indexToken, position.size, position.averagePrice, position.isLong, position.aveIncreaseTime, position.collateral);
+            (bool _hasProfit, uint256 delta) = vaultUtils.getDelta(position, _price);
             hasProfit = _hasProfit;
             adjustedDelta = _sizeDelta.mul(delta).div(position.size);// get the proportional change in pnl
         }
@@ -522,12 +510,9 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
 
             uint256 tokenAmount = usdToTokenMin(position.collateralToken, profitUsdOut);
             _decreasePoolAmount(position.collateralToken, tokenAmount);
-            // _decreaseGuaranteedUsd(position.collateralToken, profitUsdOut);
         }
         else if (!hasProfit && adjustedDelta > 0) {
             position.collateral = position.collateral.sub(adjustedDelta);
-            // uint256 tokenAmount = usdToTokenMin(position.collateralToken, adjustedDelta);
-            // _increasePoolAmount(position.collateralToken, tokenAmount);
             _decreaseGuaranteedUsd(position.collateralToken, adjustedDelta);//decreaseGU = taking position profit by pool
             position.realisedPnl = position.realisedPnl - int256(adjustedDelta);
         }
@@ -551,7 +536,8 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
             position.collateral = 0;
         }
 
-        uint256 usdOut = fee > 0 ? usdOutAfterFee.add(uint256(fee)) :  usdOutAfterFee.sub(uint256(-fee));
+        // uint256 usdOut = fee > 0 ? usdOutAfterFee.add(uint256(fee)) :  usdOutAfterFee.sub(uint256(-fee));
+        uint256 usdOut = usdOutAfterFee.add(fee);
         emit UpdatePnl(_key, hasProfit, adjustedDelta, position.size, position.collateral, usdOut, usdOutAfterFee);
         return (usdOut, usdOutAfterFee);
     }
@@ -568,33 +554,26 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
         uint256 afterFeeAmount = _amount
             .mul(VaultMSData.COM_RATE_PRECISION.sub(_feeBasisPoints))
             .div(VaultMSData.COM_RATE_PRECISION);
-        uint256 feeAmount = _amount.sub(afterFeeAmount);
-        // feeReserves[_token] = feeReserves[_token].add(feeAmount);
-        // feeReservesUSD = feeReservesUSD.add(_feeUSD);
-        // uint256 _tIndex = block.timestamp.div(24 hours);
-        // feeReservesRecord[_tIndex] = feeReservesRecord[_tIndex].add(_feeUSD);
-        //transfer fee out 
-        IERC20(_token).safeTransfer(feeRouter, feeAmount);
-        IFeeRouter(feeRouter).pcFee(address(0), _token, feeAmount, 0);
-
-        emit CollectSwapFees(_token, tokenToUsdMin(_token, feeAmount), feeAmount);
+        uint256 feeUSD = tokenToUsdMin(_token, _amount.sub(afterFeeAmount));
+        uint256 _feeTokenAmount = usdToTokenMin(feeOutToken, feeUSD);
+        _decreasePoolAmount(feeOutToken, _feeTokenAmount);
+        _transferOut(feeOutToken, _feeTokenAmount, feeRouter); 
+        emit CollectSwapFees(feeOutToken, feeUSD, _feeTokenAmount);
         return afterFeeAmount;
     }
 
-    // function _collectMarginFees(address _account, address _collateralToken, address _indexToken,bool _isLong, uint256 _sizeDelta, uint256 _size, uint256 _entryFundingRate 
-    function _collectMarginFees(bytes32 _key, uint256 _sizeDelta) private returns (int256) {
+    function _collectMarginFees(bytes32 _key, uint256 _sizeDelta) private returns (uint256) {
         VaultMSData.Position storage _position = positions[_key];
         int256 _premiumFee = vaultUtils.getPremiumFee(_position, tradingFee[_position.indexToken]);
         _position.accPremiumFee += _premiumFee;
         if (_premiumFee > 0){
             _validate(_position.collateral >= uint256(_premiumFee), 29);
-            _increaseGuaranteedUsd(_position.collateralToken, uint256(_premiumFee));//increase -> aum ↑
+            // _decreaseGuaranteedUsd(_position.collateralToken, uint256(_premiumFee));
             _position.collateral = _position.collateral.sub(uint256(_premiumFee));
-        }else if (_premiumFee <0) {
-            _decreaseGuaranteedUsd(_position.collateralToken, uint256(-_premiumFee));//decrease -> aum ↓
+        }else if (_premiumFee < 0) {
+            // _increaseGuaranteedUsd(_position.collateralToken, uint256(-_premiumFee));
             _position.collateral = _position.collateral.add(uint256(-_premiumFee));
         }
-
         emit CollectPremiumFee(_position.account, _position.size, _position.entryPremiumRateSec, _premiumFee);
 
         uint256 feeUsd = vaultUtils.getPositionFee(_position, _sizeDelta,tradingFee[_position.indexToken]);
@@ -602,30 +581,31 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
         uint256 fuFee = vaultUtils.getFundingFee(_position, tradingFee[_position.collateralToken]);
         _position.accFundingFee = _position.accFundingFee.add(fuFee);
         feeUsd = feeUsd.add(fuFee);
-        uint256 feeTokens = usdToTokenMin(_position.collateralToken, feeUsd);
         _validate(_position.collateral >= feeUsd, 29);
+        //decrease 
         _position.collateral = _position.collateral.sub(feeUsd);
-        
-        //decrease pool into fee
         _decreaseGuaranteedUsd(_position.collateralToken, feeUsd);
-        _decreasePoolAmount(_position.collateralToken, feeTokens);
-        _collectFeeResv(_position.account, _position.collateralToken, feeUsd, feeTokens);
 
+        //decrease pool into fee
+        _collectFeeResv(_position.account, feeOutToken, feeUsd);
 
-        emit CollectMarginFees(_position.collateralToken, feeUsd, feeTokens);
-        return _premiumFee + int256(feeUsd);
+        return feeUsd;
     }
 
-    function _collectFeeResv(address _account, address _collateralToken, uint256 _marginFees, uint256 _feeTokens) private {
-        // feeReserves[_collateralToken] = feeReserves[_collateralToken].add(_feeTokens);
-        // feeReservesUSD = feeReservesUSD.add(_marginFees);
-        uint256 _discFee = _feeTokens.mul(psbt.updateFee(_account, _marginFees)).div(_marginFees);
-        // feeReservesDiscountedUSD = feeReservesDiscountedUSD.add(_discFee);
-        // uint256 _tIndex = block.timestamp.div(24 hours);
-        // feeReservesRecord[_tIndex] = feeReservesRecord[_tIndex].add(_marginFees.sub(_discFee));
-        IERC20(_collateralToken).safeTransfer(feeRouter,  _feeTokens.sub(_discFee));
-        IFeeRouter(feeRouter).pcFee(_account, _collateralToken, _feeTokens, _feeTokens.sub(_discFee));
-        emit CollectMarginFees(_collateralToken, _marginFees, _feeTokens);
+    function _collectFeeResv(address _account, address _token, uint256 _marginFeesUSD) private returns (uint256) {
+        uint256 _feeInToken = usdToTokenMin(_token, _marginFeesUSD);
+        _decreasePoolAmount(_token, _feeInToken);
+        (uint256 _discFee, uint256 _rebateFee, address _rebateAccount) = pid.getFeeDet(_account, _feeInToken);
+        uint256 _discFeeInToken = _discFee.add(_rebateFee);
+        _transferOut(_token, _feeInToken.sub(_discFeeInToken), feeRouter);
+        if (_discFeeInToken > 0){
+            _transferOut(_token, _discFee, userFeeResv);
+            IUserFeeResv(userFeeResv).update(_account, _token, _discFee);
+            _transferOut(_token, _rebateFee, userFeeResv);
+            IUserFeeResv(userFeeResv).update(_rebateAccount, _token, _rebateFee);
+        }
+        emit CollectMarginFees(_token, _marginFeesUSD, _feeInToken, _discFeeInToken);
+        return _feeInToken;
     }
 
 
@@ -637,14 +617,14 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     }
 
     function _transferOut( address _token, uint256 _amount, address _receiver ) private {
-        IERC20(_token).safeTransfer(_receiver, _amount);
+        if (_amount > 0)
+            IERC20(_token).safeTransfer(_receiver, _amount);
         tokenBase[_token].balance = IERC20(_token).balanceOf(address(this));
     }
 
     function _increasePoolAmount(address _token, uint256 _amount) private {
         tokenBase[_token].poolAmount = tokenBase[_token].poolAmount.add(_amount);
-        // uint256 balance = IERC20(_token).balanceOf(address(this));
-        // _validate(tokenBase[_token].poolAmount <= balance, 49);
+        _validatePRA(_token);
         emit IncreasePoolAmount(_token, _amount);
     }
 
@@ -705,12 +685,17 @@ contract Vault is ReentrancyGuard, IVault, Ownable {
     }
 
     function _increaseGuaranteedUsd(address _token, uint256 _usdAmount) private {
-        guaranteedUsd[_token] = guaranteedUsd[_token].add(_usdAmount);
+        guaranteedUsd = guaranteedUsd.add(_usdAmount);
         emit IncreaseGuaranteedUsd(_token, _usdAmount);
     }
 
     function _decreaseGuaranteedUsd(address _token, uint256 _usdAmount)  private {
-        guaranteedUsd[_token] = guaranteedUsd[_token] > _usdAmount ?guaranteedUsd[_token].sub(_usdAmount) : 0;
+        guaranteedUsd = guaranteedUsd > _usdAmount ?guaranteedUsd.sub(_usdAmount) : 0;
         emit DecreaseGuaranteedUsd(_token, _usdAmount);
     }
+
+    function tokenDecimals(address _token) public view  returns (uint8){
+        return IMintable(_token).decimals();
+    }
+
 }

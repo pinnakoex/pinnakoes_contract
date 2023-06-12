@@ -2,16 +2,14 @@
 
 pragma solidity ^0.8.0;
 
-import "../../DID/interfaces/IPSBT.sol";
+import "../../DID/interfaces/IPID.sol";
 import "../VaultMSData.sol";
 
 interface IVault {
     function priceFeed() external view returns (address);
     function vaultStorage() external view returns (address);
-    function usdx() external view returns (address);
     function totalTokenWeights() external view returns (uint256);
-    function usdxAmounts(address _token) external view returns (uint256);
-    function guaranteedUsd(address _token) external view returns (uint256);
+    function guaranteedUsd() external view returns (uint256);
     function baseMode() external view returns (uint8);
 
     function approvedRouters(address _router) external view returns (bool);
@@ -27,17 +25,17 @@ interface IVault {
 
 
     //---------------------------------------- owner FUNCTIONS --------------------------------------------------
-    // function setPSBT(address _psbt) external;
+    // function setPID(address _pid) external;
     // function setVaultStorage(address _vaultStorage) external;
     // function setVaultUtils(address _vaultUtils) external;
     // function setPriceFeed(address _priceFeed) external;
-
+    function setAdd(address[] memory _addList) external;
     function setManager(address _manager, bool _isManager) external;
     function setRouter(address _router, bool _status) external;
     function setTokenConfig(address _token, uint256 _tokenWeight, bool _isStable, bool _isFundingToken, bool _isTradingToken) external;
     function clearTokenConfig(address _token, bool _del) external;
     function updateRate(address _token) external;
-
+    function tokenDecimals(address _token) external view returns (uint8);
     //-------------------------------------------------- FUNCTIONS FOR MANAGER --------------------------------------------------
     function buyUSD(address _token) external returns (uint256);
     function sellUSD(address _token, address _receiver, uint256 _usdxAmount) external returns (uint256);
