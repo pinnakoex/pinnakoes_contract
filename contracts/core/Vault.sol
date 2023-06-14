@@ -47,6 +47,7 @@ contract Vault is IVault, Ownable {
     mapping(address => VaultMSData.TradingFee) tradingFee;
     mapping(bytes32 => VaultMSData.Position) positions;
     mapping(address => VaultMSData.TradingRec) tradingRec;
+    mapping(address => int256) override premiumFeeBalance;
     uint256 public override globalShortSize;
     uint256 public override globalLongSize;
 
@@ -574,6 +575,7 @@ contract Vault is IVault, Ownable {
             // _increaseGuaranteedUsd(_position.collateralToken, uint256(-_premiumFee));
             _position.collateral = _position.collateral.add(uint256(-_premiumFee));
         }
+        premiumFeeBalance[_position.indexToken] = premiumFeeBalance[_position.indexToken] + _premiumFee;
         emit CollectPremiumFee(_position.account, _position.size, _position.entryPremiumRateSec, _premiumFee);
 
         uint256 feeUsd = vaultUtils.getPositionFee(_position, _sizeDelta,tradingFee[_position.indexToken]);
@@ -676,6 +678,9 @@ contract Vault is IVault, Ownable {
                 globalShortSize = globalShortSize.sub(_sizeDelta);    
             }
             // emit UpdateGlobalSize(_indexToken, ttREC.shortSize, globalShortSize,ttREC.shortAveragePrice, _increase, _isLong );
+        }
+        if (ttREC.longSize.add(ttREC.shortSize) == 0){
+            premiumFeeBalance[_indexToken] = 0;
         }
     }
 
