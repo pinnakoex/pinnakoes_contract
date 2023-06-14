@@ -22,6 +22,7 @@ interface IVault {
     // function feeClaimedUSD() external view returns (uint256);
     function globalShortSize( ) external view returns (uint256);
     function globalLongSize( ) external view returns (uint256);
+    function premiumFeeBalance(address _token) external view returns (int256);
 
 
     //---------------------------------------- owner FUNCTIONS --------------------------------------------------
