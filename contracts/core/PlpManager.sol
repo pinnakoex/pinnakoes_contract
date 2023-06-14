@@ -257,6 +257,14 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
                     userLongProfits = userLongProfits.add(delta);
                 }    
             }
+            
+            int256 unPreFee = vault.premiumFeeBalance(_token);
+            if (unPreFee > 0){
+                aum = aum.sub(uint256(unPreFee));
+            }
+            else if (unPreFee < 0){
+                aum = aum.add(uint256(-unPreFee));
+            }
         }
 
         uint256 _totalUserProfits = userLongProfits.add(userShortProfits);
@@ -310,6 +318,14 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
                 } else {
                     userLongProfits = userLongProfits.add(delta);
                 }    
+            }
+
+            int256 unPreFee = vault.premiumFeeBalance(_token);
+            if (unPreFee > 0){
+                aum = aum.sub(uint256(unPreFee));
+            }
+            else if (unPreFee < 0){
+                aum = aum.add(uint256(-unPreFee));
             }
         }
 
