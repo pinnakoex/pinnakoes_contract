@@ -44,11 +44,15 @@ contract VaultPriceFeed is IVaultPriceFeed, Ownable {
     using EnumerableValues for EnumerableSet.AddressSet;
     uint256 public constant PRICE_PRECISION = 10 ** 30;
     uint256 public constant MIN_PRICE_THRES = 10 ** 20;
-    uint256 public constant BASIS_POINTS_DIVISOR = 10000;
     uint256 public constant MAX_ADJUSTMENT_INTERVAL = 2 hours;
-    uint256 public constant MAX_SPREAD_BASIS_POINTS = 50;
     uint256 public constant MAX_PRICE_VARIANCE_PER_1M = 1000;
     uint256 public constant PRICE_VARIANCE_PRECISION = 10000;
+
+
+    uint256 public constant MAX_SPREAD_BASIS_POINTS =   50000; //5% max
+    uint256 public constant BASIS_POINTS_DIVISOR    = 1000000;
+
+
 
     //global setting
     uint256 public nonstablePriceSafetyTimeGap = 15; //seconds
@@ -63,14 +67,15 @@ contract VaultPriceFeed is IVaultPriceFeed, Ownable {
         bool isStable;
         bytes32 pythKey;
         uint256 spreadBasisPoint;
-        uint256 adjustmentBasisPoint;
-        bool isAdjustmentAdditive;
+
+        uint256 priceSpreadBasisMax;
+        uint256 priceSpreadTimeStart;
+        uint256 priceSpreadTimeMax;
     }
 
     //token config.
     EnumerableSet.AddressSet private tokens;
     mapping(address => TokenInfo) private tokenInfo;
-
 
     event UpdatePriceFeedsIfNecessary(bytes[] updateData, bytes32[] priceIds,uint64[] publishTimes);
     event UpdatePriceFeeds(bytes[]  updateData);
@@ -98,7 +103,6 @@ contract VaultPriceFeed is IVaultPriceFeed, Ownable {
             tokenInfo[_tokenList[i]].isStable = _isStable[i];
             tokenInfo[_tokenList[i]].pythKey = _key[i];
             tokenInfo[_tokenList[i]].spreadBasisPoint = 0;
-            tokenInfo[_tokenList[i]].adjustmentBasisPoint = 0;
         }
     }
     function deleteToken(address[] memory _tokenList)external onlyOwner {
@@ -109,21 +113,25 @@ contract VaultPriceFeed is IVaultPriceFeed, Ownable {
             delete tokenInfo[_tokenList[i]];
         }
     }
+
     function setGap(uint256 _priceSafetyTimeGap,uint256 _stablePriceSafetyTimeGap, uint256 _stopTradingPriceGap) external onlyOwner {
         nonstablePriceSafetyTimeGap = _priceSafetyTimeGap;
         stablePriceSafetyTimeGap = _stablePriceSafetyTimeGap;
         stopTradingPriceGap = _stopTradingPriceGap;
     }
-    function setAdjustment(address _token, bool _isAdditive, uint256 _adjustmentBps) external override onlyOwner {
-        require(isSupportToken(_token), "not supported token");
-        tokenInfo[_token].isAdjustmentAdditive = _isAdditive;
-        tokenInfo[_token].adjustmentBasisPoint = _adjustmentBps;
-    }
-    function setSpreadBasisPoints(address _token, uint256 _spreadBasisPoints) external override onlyOwner {
+
+
+    function setSpreadBasisPoints(address _token, uint256 _spreadBasisPoints,
+                uint256 _priceSpreadBasisMax, uint256 _priceSpreadTimeStart, uint256 _priceSpreadTimeMax) external override onlyOwner {
         require(isSupportToken(_token), "not supported token");
         require(_spreadBasisPoints <= MAX_SPREAD_BASIS_POINTS, "VaultPriceFeed: invalid _spreadBasisPoints");
         tokenInfo[_token].spreadBasisPoint = _spreadBasisPoints;
+        tokenInfo[_token].priceSpreadBasisMax = _priceSpreadBasisMax;
+        tokenInfo[_token].priceSpreadTimeStart = _priceSpreadTimeStart;
+        tokenInfo[_token].priceSpreadTimeMax = _priceSpreadTimeMax;
     }
+
+
     function sendValue(address payable _receiver, uint256 _amount) external onlyOwner {
         _receiver.sendValue(_amount);
     }
@@ -176,7 +184,7 @@ contract VaultPriceFeed is IVaultPriceFeed, Ownable {
     //----- END of public view 
 
 
-    function _getCombPrice(address _token, bool _maximise, bool _addAdjust) internal view returns (uint256, uint256){
+    function _getCombPrice(address _token, bool _maximise) internal view returns (uint256, uint256){
         // uint256 cur_timestamp = block.timestamp;
         (uint256 pricePy, bool statePy, uint256 pyUpdatedTime) = getPythPrice(_token);
         require(statePy, "[Oracle] price failed.");
@@ -187,43 +195,56 @@ contract VaultPriceFeed is IVaultPriceFeed, Ownable {
             price_gap = price_gap.mul(PRICE_VARIANCE_PRECISION).div(pricePy);
             require(price_gap < stopTradingPriceGap, "[Oracle] System hault as large price variance.");
         }
-        pricePy = _addBasisSpread(_token, pricePy, _maximise, _addAdjust);
+        pricePy = _addBasisSpread(_token, pricePy, pyUpdatedTime, _maximise);
         require(pricePy > 0, "[Oracle] ORACLE FAILS");
         return (pricePy, pyUpdatedTime);    
     }
 
-    function _addBasisSpread(address _token, uint256 _price, bool _max, bool _addAdjust)internal view returns (uint256){
-        if (_addAdjust && tokenInfo[_token].adjustmentBasisPoint > 0) {
-            bool isAdditive = tokenInfo[_token].isAdjustmentAdditive;
-            if (isAdditive) {
-                _price = _price.mul(BASIS_POINTS_DIVISOR.add(tokenInfo[_token].adjustmentBasisPoint)).div(BASIS_POINTS_DIVISOR);
-            } else {
-                _price = _price.mul(BASIS_POINTS_DIVISOR.sub(tokenInfo[_token].adjustmentBasisPoint)).div(BASIS_POINTS_DIVISOR);
-            }
+    function _addBasisSpread(address _token, uint256 _price, uint256 _priceTime, bool _max) internal view returns (uint256){
+        uint256 factor = tokenInfo[_token].spreadBasisPoint;
+        if (tokenInfo[_token].priceSpreadBasisMax > 0 
+                && block.timestamp > _priceTime.add(tokenInfo[_token].priceSpreadTimeStart ) ) {
+            uint256 _timeGap = block.timestamp.sub(_priceTime.add(tokenInfo[_token].priceSpreadTimeStart));
+            _timeGap = _timeGap < tokenInfo[_token].priceSpreadTimeMax ? _timeGap : tokenInfo[_token].priceSpreadTimeMax;
+            factor = factor.add(_timeGap.mul(tokenInfo[_token].priceSpreadBasisMax).div(tokenInfo[_token].priceSpreadTimeMax));
         }
-        if (tokenInfo[_token].spreadBasisPoint > 0){
+        if (factor > 0){
             if (_max){
-                _price = _price.mul(BASIS_POINTS_DIVISOR.add(tokenInfo[_token].spreadBasisPoint)).div(BASIS_POINTS_DIVISOR);
+                _price = _price.mul(BASIS_POINTS_DIVISOR.add(factor)).div(BASIS_POINTS_DIVISOR);
             }
             else{
-                _price = _price.mul(BASIS_POINTS_DIVISOR.sub(tokenInfo[_token].spreadBasisPoint)).div(BASIS_POINTS_DIVISOR);
-            }         
+                _price = _price.mul(BASIS_POINTS_DIVISOR.sub(factor)).div(BASIS_POINTS_DIVISOR);
+            }
         }
         return _price;
     }
 
     //public read
-    function getPrice(address _token, bool _maximise, bool , bool _adjust) public override view returns (uint256) {
+    function getPrice(address _token, bool _maximise, bool , bool) public override view returns (uint256) {
         require(isSupportToken(_token), "Unsupported token");
-        (uint256 price, uint256 updatedTime) = _getCombPrice(_token, _maximise, _adjust);
+        (uint256 price, uint256 updatedTime) = _getCombPrice(_token, _maximise);
         uint256 safeGapTime = tokenInfo[_token].isStable ? stablePriceSafetyTimeGap : nonstablePriceSafetyTimeGap;
-        require(block.timestamp.sub(updatedTime, "update time is larger than block time") < safeGapTime, "[Oracle] price out of time.");
+        if (block.timestamp > updatedTime){
+            require(block.timestamp.sub(updatedTime, "update time is larger than block time") < safeGapTime, "[Oracle] price out of time.");
+        }
         require(price > 10, "[Oracle] invalid price");
         return price;
     }
+
+    function getPriceWithTime(address _token, bool _maximise) public override view returns (uint256, uint256) {
+        require(isSupportToken(_token), "Unsupported token");
+        (uint256 price, uint256 updatedTime) = _getCombPrice(_token, _maximise);
+        uint256 safeGapTime = tokenInfo[_token].isStable ? stablePriceSafetyTimeGap : nonstablePriceSafetyTimeGap;
+        if (block.timestamp > updatedTime){
+            require(block.timestamp.sub(updatedTime, "update time is larger than block time") < safeGapTime, "[Oracle] price out of time.");
+        }
+        require(price > 10, "[Oracle] invalid price");
+        return (price, updatedTime) ;
+    }
+
     function getPriceUnsafe(address _token, bool _maximise, bool, bool _adjust) public override view returns (uint256) {
         require(isSupportToken(_token), "Unsupported token");
-        (uint256 price, ) = _getCombPrice(_token, _maximise, _adjust);
+        (uint256 price, ) = _getCombPrice(_token, _maximise);
         require(price > 10, "[Oracle] invalid price");
         return price;
     }
@@ -312,14 +333,6 @@ contract VaultPriceFeed is IVaultPriceFeed, Ownable {
         require(decimals > 0, "invalid decimal");
         uint256 price = getPriceUnsafe(_token, _max, true, true);
         return _usdAmount.mul(10**decimals).div(price);
-    }
-
-    function adjustmentBasisPoints(address _token) external view override returns (uint256){
-        return tokenInfo[_token].adjustmentBasisPoint;
-    }
-
-    function isAdjustmentAdditive(address _token) external view override returns (bool){
-        return tokenInfo[_token].isAdjustmentAdditive;
     }
 
     function _validUpdateFee(uint256 _amount, bytes[] memory _data) internal view returns (uint256){

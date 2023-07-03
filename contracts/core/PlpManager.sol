@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "./VaultMSData.sol";
 import "./interfaces/IVault.sol";
+import "./interfaces/IVaultStorage.sol";
 import "../tokens/interfaces/IMintable.sol";
 import "../tokens/interfaces/IWETH.sol";
 import "../DID/interfaces/IPID.sol";
@@ -84,14 +85,14 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
         aumDeduction = _aumDeduction;
     }
 
-    function addLiquidity(address _token, uint256 _amount, uint256 , uint256 _minPlp, bytes[] memory _priceUpdateData) external nonReentrant returns (uint256) {
+    function addLiquidity(address _token, uint256 _amount, uint256 _minPlp, bytes[] memory _priceUpdateData) external nonReentrant payable override returns (uint256) {
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_priceUpdateData);
         return _addLiquidity( _token, _amount, _minPlp);
     }
 
-    function addLiquidityETH(uint256 _minElp, bytes[] memory _priceUpdateData) external nonReentrant payable  returns (uint256) {
+    function addLiquidityETH(uint256 _minElp, bytes[] memory _priceUpdateData) external nonReentrant payable override returns (uint256) {
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_priceUpdateData);
-        return _addLiquidity( address(0), msg.value, _minElp);
+        return _addLiquidity(address(0), msg.value, _minElp);
     }
 
     function _addLiquidity(address _token, uint256 _amount, uint256 _minlp) private returns (uint256) {
@@ -122,7 +123,7 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
         return mintAmount;
     }
 
-    function removeLiquidity(address _tokenOut, uint256 _plpAmount, uint256 _minOut, bytes[] memory _priceUpdateData) external nonReentrant returns (uint256) {
+    function removeLiquidity(address _tokenOut, uint256 _plpAmount, uint256 _minOut, bytes[] memory _priceUpdateData) external nonReentrant payable override returns (uint256) {
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_priceUpdateData);
         return _removeLiquidity(_plpAmount,_tokenOut, _minOut);
     }
@@ -154,7 +155,7 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
         return amountOut;
     }
 
-    function removeLiquidityETH(uint256 _plpAmount, bytes[] memory _priceUpdateData) external nonReentrant returns (uint256) {
+    function removeLiquidityETH(uint256 _plpAmount, bytes[] memory _priceUpdateData) external nonReentrant payable override returns (uint256) {
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_priceUpdateData);
         return _removeLiquidity(  _plpAmount,address(0), 0);
     }
@@ -170,7 +171,7 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
 
 
     function getPoolTokenList() public view returns (address[] memory) {
-        return vault.fundingTokenList();
+        return IVaultStorage(vault.vaultStorage()).fundingTokenList();
     }
 
 
@@ -211,8 +212,9 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
     }
 
     function getAumSafe(bool maximise) public view returns (uint256) {
-        address[] memory fundingTokenList = vault.fundingTokenList();
-        address[] memory tradingTokenList = vault.tradingTokenList();
+        address[] memory fundingTokenList = IVaultStorage(vault.vaultStorage()).fundingTokenList();
+        address[] memory tradingTokenList = IVaultStorage(vault.vaultStorage()).tradingTokenList();
+
         uint256 aum = aumAddition;
         uint256 userShortProfits = 0;
         uint256 userLongProfits = 0;
@@ -258,7 +260,7 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
                 }    
             }
             
-            int256 unPreFee = vault.premiumFeeBalance(_token);
+            int256 unPreFee = vault.premiumFeeBalance(token);
             if (unPreFee > 0){
                 aum = aum.sub(uint256(unPreFee));
             }
@@ -274,8 +276,8 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
 
 
     function getAum(bool maximise) public view returns (uint256) {
-        address[] memory fundingTokenList = vault.fundingTokenList();
-        address[] memory tradingTokenList = vault.tradingTokenList();
+        address[] memory fundingTokenList = IVaultStorage(vault.vaultStorage()).fundingTokenList();
+        address[] memory tradingTokenList = IVaultStorage(vault.vaultStorage()).tradingTokenList();
         uint256 aum = aumAddition;
         uint256 userShortProfits = 0;
         uint256 userLongProfits = 0;
@@ -320,7 +322,7 @@ contract PlpManager is IPlpManager, ReentrancyGuard, Ownable {
                 }    
             }
 
-            int256 unPreFee = vault.premiumFeeBalance(_token);
+            int256 unPreFee = vault.premiumFeeBalance(token);
             if (unPreFee > 0){
                 aum = aum.sub(uint256(unPreFee));
             }

@@ -19,9 +19,7 @@ contract Timelock is ITimelock, Ownable {
     uint256 public constant PRICE_PRECISION = 10 ** 30;
     uint256 public constant MAX_BUFFER = 5 days;
 
-    uint256 public buffer;
-    uint256 public marginFeeBasisPoints;
-    uint256 public maxMarginFeeBasisPoints;
+    uint256 public buffer = 1 hours;
 
     mapping (bytes32 => uint256) public pendingActions;
 
@@ -48,23 +46,11 @@ contract Timelock is ITimelock, Ownable {
 
     event SignalSetTokenChainlinkConfig(address _target, address _token, address _chainlinkContract, bool _isStrictStable);
 
-    constructor(
-        uint256 _buffer,
-        uint256 _marginFeeBasisPoints,
-        uint256 _maxMarginFeeBasisPoints) {
-        require(_buffer <= MAX_BUFFER, "Timelock: invalid _buffer");
-        buffer = _buffer;
-        marginFeeBasisPoints = _marginFeeBasisPoints;
-        maxMarginFeeBasisPoints = _maxMarginFeeBasisPoints;
-    }
-
     function setBuffer(uint256 _buffer) external onlyOwner {
         require(_buffer <= MAX_BUFFER, "Timelock: invalid _buffer");
-        require(_buffer > buffer, "Timelock: buffer cannot be decreased");
+        require(_buffer > buffer, "Timelock: buffer can not be decreased");
         buffer = _buffer;
     }
-
-
 
 
     //for pricefeed
@@ -109,32 +95,6 @@ contract Timelock is ITimelock, Ownable {
         ITimelockTarget(_target).setTaxRate(_taxMax, _taxTime);
     }
 
-    function setMarginFeeBasisPoints(uint256 _marginFeeBasisPoints, uint256 _maxMarginFeeBasisPoints) external onlyOwner {
-        marginFeeBasisPoints = _marginFeeBasisPoints;
-        maxMarginFeeBasisPoints = _maxMarginFeeBasisPoints;
-    }
-
-    function setSwapFees(
-        address _vault,
-        uint256 _taxBasisPoints,
-        uint256 _stableTaxBasisPoints,
-        uint256 _mintBurnFeeBasisPoints,
-        uint256 _swapFeeBasisPoints,
-        uint256 _stableSwapFeeBasisPoints
-    ) external onlyOwner {
-        IVaultUtils vaultUtils = IVaultUtils(ITimelockTarget(_vault).vaultUtils());
-        vaultUtils.setFees(
-            _taxBasisPoints,
-            _stableTaxBasisPoints,
-            _mintBurnFeeBasisPoints,
-            _swapFeeBasisPoints,
-            _stableSwapFeeBasisPoints,
-            maxMarginFeeBasisPoints,
-            vaultUtils.liquidationFeeUsd(),
-            vaultUtils.hasDynamicFees()
-        );
-    }
-
     // assign _marginFeeBasisPoints to this.marginFeeBasisPoints
     // because enableLeverage would update Vault.marginFeeBasisPoints to this.marginFeeBasisPoints
     // and disableLeverage would reset the Vault.marginFeeBasisPoints to this.maxMarginFeeBasisPoints
@@ -149,7 +109,6 @@ contract Timelock is ITimelock, Ownable {
         uint256 _liquidationFeeUsd,
         bool _hasDynamicFees
     ) external onlyOwner {
-        marginFeeBasisPoints = _marginFeeBasisPoints;
         IVaultUtils vaultUtils = IVaultUtils(ITimelockTarget(_vault).vaultUtils());
 
         vaultUtils.setFees(
@@ -158,7 +117,7 @@ contract Timelock is ITimelock, Ownable {
             _mintBurnFeeBasisPoints,
             _swapFeeBasisPoints,
             _stableSwapFeeBasisPoints,
-            maxMarginFeeBasisPoints,
+            _marginFeeBasisPoints,
             _liquidationFeeUsd,
             _hasDynamicFees
         );

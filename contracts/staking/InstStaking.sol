@@ -6,6 +6,8 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "../utils/EnumerableValues.sol";
 import "./interfaces/IInstStaking.sol";
 interface IFeeRouter {
     function distribute() external;
@@ -20,6 +22,8 @@ contract InstStaking is Ownable, IInstStaking{
         uint256 balance;
         uint256 cumulatedRewardPerToken_PREC;
     }
+    using EnumerableSet for EnumerableSet.AddressSet;
+    using EnumerableValues for EnumerableSet.AddressSet;
 
     mapping (address => RewardInfo) rewardInfo;
 
@@ -36,8 +40,12 @@ contract InstStaking is Ownable, IInstStaking{
     mapping(address => mapping(address => uint256)) public unclaimedReward;
     mapping(address => mapping(uint256 => uint256)) public rewardRecord;
 
+    EnumerableSet.AddressSet noCountAddress;
+
+
     constructor(address _depositToken) {
         depositToken = _depositToken;
+        noCountAddress.add(address(this));
     }
 
     //-- public view func.
@@ -71,6 +79,9 @@ contract InstStaking is Ownable, IInstStaking{
 
     function claimable(address _account) public view override returns (address[] memory, uint256[] memory){
         uint256[] memory claimable_list = new uint256[](rewardTokens.length);
+        if (isNoCount(_account)){
+            return (rewardTokens, claimable_list);
+        }
         for(uint8 i = 0; i < rewardTokens.length; i++){
             address _tk = rewardTokens[i];
             claimable_list[i] = unclaimedReward[_account][_tk];
@@ -88,10 +99,31 @@ contract InstStaking is Ownable, IInstStaking{
     function setRewards(address[] memory _rewardTokens) external onlyOwner {
         rewardTokens = _rewardTokens;
     }
+
     function setFeeRouter(address _feeRouter) external onlyOwner {
         feeRouter = _feeRouter;
     }
 
+    function setNoCountAddress(address[] memory _addList, bool _status) external onlyOwner{
+        if (_status){
+            for(uint64 i = 0; i < _addList.length; i++){
+                if (!noCountAddress.contains(_addList[i])){
+                    noCountAddress.add(_addList[i]);
+                }
+            }
+        }
+        else{
+            for(uint64 i = 0; i < _addList.length; i++){
+                if (noCountAddress.contains(_addList[i])){
+                    noCountAddress.remove(_addList[i]);
+                }
+            }
+        }
+    }
+
+    function isNoCount(address _add) public view returns (bool){
+        return noCountAddress.contains(_add);
+    }
 
     function withdrawToken(address _token, address _account, uint256 _amount) external onlyOwner {
         IERC20(_token).safeTransfer(_account, _amount);
@@ -151,7 +183,7 @@ contract InstStaking is Ownable, IInstStaking{
         return (rewardTokens, claim_res);
     }
 
-    function claim() public returns (address[] memory, uint256[] memory ) {
+    function claim() public returns (address[] memory, uint256[] memory ) {  
         return (rewardTokens, _claim(msg.sender));
     }
 
@@ -161,6 +193,9 @@ contract InstStaking is Ownable, IInstStaking{
 
     function _claim(address _account) private returns (uint256[] memory ) {
         uint256[] memory claim_res = new uint256[](rewardTokens.length);
+        if (isNoCount(_account)){
+            return claim_res;
+        }      
         updateRewards(_account);    
         for(uint8 i = 0; i < rewardTokens.length; i++){
             _transferOut(_account,rewardTokens[i], unclaimedReward[_account][rewardTokens[i]]);
@@ -176,7 +211,7 @@ contract InstStaking is Ownable, IInstStaking{
         for(uint8 i = 0; i < rewardTokens.length; i++){
             _distributeReward(rewardTokens[i]);
         }
-        if (_account != address(0)){
+        if (_account != address(0) && _account != address(this)){
             if (userDeposit(_account) > 0){
                 for(uint8 i = 0; i < rewardTokens.length; i++){
                     unclaimedReward[_account][rewardTokens[i]] = unclaimedReward[_account][rewardTokens[i]].add(

@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "../tokens/interfaces/IWETH.sol";
 import "./interfaces/IVault.sol";
+import "./interfaces/IVaultStorage.sol";
 import "../DID/interfaces/IPID.sol";
 import "../tokens/interfaces/IMintable.sol";
 import "../oracle/interfaces/IVaultPriceFeed.sol";
@@ -76,7 +77,7 @@ contract RouterSign is Ownable, ReentrancyGuard {
     }
 
     function increasePositionAndUpdate(address[] memory _path, address _indexToken, uint256 _amountIn, uint256 _sizeDelta, bool _isLong, uint256 _price,
-            bytes[] memory _updaterSignedMsg, uint256 _minColUsd) external nonReentrant{
+            bytes[] memory _updaterSignedMsg, uint256 _minColUsd) external payable nonReentrant{
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_updaterSignedMsg);
         if (_amountIn > 0) {
             IERC20(_path[0]).safeTransferFrom(_sender(), vault, _amountIn);
@@ -104,13 +105,13 @@ contract RouterSign is Ownable, ReentrancyGuard {
     }
 
     function decreasePositionAndUpdate(address _collateralToken, address _indexToken, uint256 _collateralDelta, uint256 _sizeDelta, bool _isLong, address _receiver, uint256 _price,
-                bytes[] memory _updaterSignedMsg) external nonReentrant  {
+                bytes[] memory _updaterSignedMsg) external payable nonReentrant  {
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_updaterSignedMsg);
         _decreasePosition(_collateralToken, _indexToken, _collateralDelta, _sizeDelta, _isLong, _receiver, _price);
     }
 
     function decreasePositionETHAndUpdate(address _collateralToken, address _indexToken, uint256 _collateralDelta, uint256 _sizeDelta, bool _isLong, address payable _receiver, uint256 _price,
-                bytes[] memory _updaterSignedMsg) external nonReentrant {
+                bytes[] memory _updaterSignedMsg) external payable nonReentrant {
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_updaterSignedMsg);
         uint256 amountOut = _decreasePosition(_collateralToken, _indexToken, _collateralDelta, _sizeDelta, _isLong, address(this), _price);
         _transferOutETH(amountOut, _receiver);
@@ -125,7 +126,7 @@ contract RouterSign is Ownable, ReentrancyGuard {
     }
 
     function decreasePositionAndSwapETHUpdate(address[] memory _path, address _indexToken, uint256 _collateralDelta, uint256 _sizeDelta, bool _isLong, address payable _receiver, uint256 _price, uint256 _minOut,
-                bytes[] memory _updaterSignedMsg) external nonReentrant {
+                bytes[] memory _updaterSignedMsg) external payable nonReentrant {
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_updaterSignedMsg);
         require(_path[_path.length - 1] == weth, "Router: invalid _path");
         uint256 amount = _decreasePosition(_path[0], _indexToken, _collateralDelta, _sizeDelta, _isLong, address(this), _price);
@@ -147,8 +148,7 @@ contract RouterSign is Ownable, ReentrancyGuard {
     function validSwap(address _token, uint256 _amount) public view returns(bool){
         require(IVault(vault).isFundingToken(_token), "not funding token");
         if (swapMaxRatio[_token] == 0) return true;
-        
-        address[] memory fundingTokenList = IVault(vault).fundingTokenList();
+        address[] memory fundingTokenList = IVaultStorage(IVault(vault).vaultStorage()).fundingTokenList();
         uint256 aum = 0;
         uint256 token_mt = 0;
         for (uint256 i = 0; i < fundingTokenList.length; i++) {
@@ -176,7 +176,7 @@ contract RouterSign is Ownable, ReentrancyGuard {
 
 
     function swap(address[] memory _path, uint256 _amountIn, uint256 _minOut, address _receiver,
-                bytes[] memory _updaterSignedMsg) external nonReentrant {
+                bytes[] memory _updaterSignedMsg) external payable nonReentrant {
         require(isSwapOpenForPublic, "swap is not open");
         require(validSwap(_path[0], _amountIn), "Swap limit reached.");
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_updaterSignedMsg);
@@ -206,7 +206,7 @@ contract RouterSign is Ownable, ReentrancyGuard {
     }
 
     function swapTokensToETH(address[] memory _path, uint256 _amountIn, uint256 _minOut, address payable _receiver,
-                bytes[] memory _updaterSignedMsg) external nonReentrant {
+                bytes[] memory _updaterSignedMsg) external payable nonReentrant {
         require(isSwapOpenForPublic, "swap is not open");
         require(validSwap(_path[0], _amountIn), "Swap limit reached.");
         require(_path[_path.length - 1] == weth, "Router: invalid _path");

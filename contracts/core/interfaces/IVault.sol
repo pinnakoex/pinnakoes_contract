@@ -51,8 +51,6 @@ interface IVault {
 
     //-------------------------------------------------- PUBLIC FUNCTIONS --------------------------------------------------
     function directPoolDeposit(address _token) external;
-    function tradingTokenList() external view returns (address[] memory);
-    function fundingTokenList() external view returns (address[] memory);
 
 
     function getMaxPrice(address _token) external view returns (uint256);
@@ -67,10 +65,10 @@ interface IVault {
     function isTradingToken(address _token) external view returns(bool);
     // function tokenDecimals(address _token) external view returns (uint256);
     function getPositionStructByKey(bytes32 _key) external view returns (VaultMSData.Position memory);
-    function getPositionStruct(address _account, address _collateralToken, address _indexToken, bool _isLong) external view returns (VaultMSData.Position memory);
+    // function getPositionStruct(address _account, address _collateralToken, address _indexToken, bool _isLong) external view returns (VaultMSData.Position memory);
     function getTokenBase(address _token) external view returns (VaultMSData.TokenBase memory);
     function getTradingFee(address _token) external view returns (VaultMSData.TradingFee memory);
     function getTradingRec(address _token) external view returns (VaultMSData.TradingRec memory);
-    function getUserKeys(address _account, uint256 _start, uint256 _end) external view returns (bytes32[] memory);
-    function getKeys(uint256 _start, uint256 _end) external view returns (bytes32[] memory);
+    // function getUserKeys(address _account, uint256 _start, uint256 _end) external view returns (bytes32[] memory);
+    // function getKeys(uint256 _start, uint256 _end) external view returns (bytes32[] memory);
 }

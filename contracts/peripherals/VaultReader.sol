@@ -32,7 +32,7 @@ struct TokenProfit{
     uint256 shortSize;
 }
 
-contract VaultReader is Initializable{
+contract VaultReader{
     using SafeMath for uint256;
 
     function getVaultTokenInfoV4(address _vault, address _positionManager, address _weth, uint256 _usdxAmount, address[] memory _tokens) public view returns (uint256[] memory) {

@@ -139,19 +139,40 @@ struct VaultBasicInfo{
     
 }
 
-contract PositionReader is Initializable {
+contract PositionReader {
     using SafeMath for uint256;
 
     address public nativeToken;
     IVaultPriceFeed public priceFeed;
 
-    function initialize(address _nativeToken, address _priceFeed) public initializer {
+    constructor (address _nativeToken, address _priceFeed) {
         nativeToken = _nativeToken;
         priceFeed = IVaultPriceFeed(_priceFeed);
     }
 
+    function getDelta(address _indexToken, uint256 _size, uint256 _averagePrice, bool _isLong, uint256 /*_lastIncreasedTime*/, uint256 _colSize) public view  returns (bool, uint256) {
+        uint256 price = _isLong ? IVaultPriceFeed(priceFeed).getPriceUnsafe(_indexToken, false, true, true) : IVaultPriceFeed(priceFeed).getPriceUnsafe(_indexToken, true, true, true);
+        uint256 priceDelta = _averagePrice > price ? _averagePrice.sub(price) : price.sub(_averagePrice);
+        uint256 delta = _size.mul(priceDelta).div(_averagePrice);
+        bool hasProfit;
+        if (_isLong) {
+            hasProfit = price > _averagePrice;
+        } else {
+            hasProfit = _averagePrice > price;
+        }
+        
+        uint256 maxProfitRatio = 10;
+        //todo: add max profit here
+        if (hasProfit && maxProfitRatio > 0){
+            uint256 _maxProfit = _colSize.mul(maxProfitRatio).div(VaultMSData.COM_RATE_PRECISION);
+            delta = delta > _maxProfit ? _maxProfit : delta;
+        }
+
+        return (hasProfit, delta);
+    }
+
     function getUserPositions(address _vault, address _account) public view returns (DispPosition[] memory){
-        bytes32[] memory _keys = IVault(_vault).getUserKeys(_account, 0, 20);
+        bytes32[] memory _keys = IVaultStorage(IVault(_vault).vaultStorage()).getUserKeys(_account, 0, 20);
         
         DispPosition[] memory _dps = new DispPosition[](_keys.length);
 
@@ -161,7 +182,7 @@ contract PositionReader is Initializable {
             VaultMSData.TradingFee memory tFee = IVault(_vault).getTradingFee(position.indexToken);
             VaultMSData.TradingFee memory tFundFee = IVault(_vault).getTradingFee(position.collateralToken);
             
-            (bool _hasProfit, uint256 delta) = vaultUtils.getDelta(position, priceFeed.getPriceUnsafe(position.indexToken, !position.isLong, false, false));
+            (bool _hasProfit, uint256 delta) = getDelta(position.indexToken, position.size, position.averagePrice, position.isLong, position.aveIncreaseTime, position.collateral);
             _dps[i].account = position.account;
             _dps[i].collateralToken = position.collateralToken;
             _dps[i].indexToken = position.indexToken;
@@ -190,8 +211,8 @@ contract PositionReader is Initializable {
             _dps[i].pendingPositionFee = vaultUtils.getPositionFee(position, position.size, tFee);
             _dps[i].pendingFundingFee = vaultUtils.getFundingFee(position, tFundFee);
 
-            _dps[i].indexTokenMinPrice = IVault(_vault).getMinPrice(position.indexToken);
-            _dps[i].indexTokenMaxPrice = IVault(_vault).getMaxPrice(position.indexToken);
+            _dps[i].indexTokenMinPrice = priceFeed.getPriceUnsafe(position.indexToken, false, false, false);
+            _dps[i].indexTokenMaxPrice = priceFeed.getPriceUnsafe(position.indexToken, true, false, false);
         }
         return _dps;
     }
@@ -259,9 +280,9 @@ contract PositionReader is Initializable {
             _dispT[i].maxRatio = _tLim.maxRatio;  
             _dispT[i].countMinSize = _tLim.countMinSize;
 
-            _dispT[i].spreadBasis = vaultUtils.spreadBasis(_fundTokens[i]);
-            _dispT[i].maxSpreadBasis = vaultUtils.maxSpreadBasis(_fundTokens[i]);
-            _dispT[i].minSpreadCalUSD = vaultUtils.minSpreadCalUSD(_fundTokens[i]);
+            _dispT[i].spreadBasis = vaultUtils.sizeSpreadBasisMax(_fundTokens[i]);
+            _dispT[i].maxSpreadBasis = vaultUtils.sizeSpreadGapStart(_fundTokens[i]);
+            _dispT[i].minSpreadCalUSD = vaultUtils.sizeSpreadGapMax(_fundTokens[i]);
         }
 
         for(uint256 i = 0; i < _dispT.length; i++){

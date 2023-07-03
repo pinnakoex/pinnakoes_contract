@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/IRewardTracker.sol";
+import "../DID/interfaces/IPID.sol";
 
 
 contract RewardTracker is  ReentrancyGuard, IRewardTracker, Ownable { //IERC20,
@@ -22,15 +23,17 @@ contract RewardTracker is  ReentrancyGuard, IRewardTracker, Ownable { //IERC20,
     uint256 public cumulativeRewardPerToken;
 
     mapping (address => uint256) public override stakedAmounts;
+    mapping (address => uint256) public claimedAmounts;
     mapping (address => uint256) public claimableReward;
     mapping (address => uint256) public previousCumulatedRewardPerToken;
     mapping (address => uint256) public override cumulativeRewards;
     mapping (address => uint256) public override averageStakedAmounts;
-
+    mapping (address => uint256) public override rebatedQuota;
 
     // uint256[] public rewardPerSec;
     // uint256[] public rewardPerSecUpdateTime;
 
+    address public pid;
     address public depositToken;
     address public rewardToken;
     bool public isInitialized;
@@ -44,11 +47,13 @@ contract RewardTracker is  ReentrancyGuard, IRewardTracker, Ownable { //IERC20,
     mapping (address => bool) public isHandler;
 
     event Claim(address receiver, uint256 amount);
+    event AddRebateQuota(address account, address rebateAccount, uint256 claimedAmount, uint256 rebateQuota);
 
     function initialize(
         address _depositToken,
         address _rewardToken,
-        uint256 _poolRewardPerInterval
+        uint256 _poolRewardPerInterval,
+        address _pid
     ) external onlyOwner {
         require(!isInitialized, "RewardTracker: already initialized");
         isInitialized = true;
@@ -56,6 +61,7 @@ contract RewardTracker is  ReentrancyGuard, IRewardTracker, Ownable { //IERC20,
         rewardToken = _rewardToken;
         poolTokenRewardPerInterval = _poolRewardPerInterval;
         _updateRewards(address(0));
+        pid = _pid;
     }
 
     function setHandler(address _handler, bool _isActive) external onlyOwner {
@@ -149,9 +155,16 @@ contract RewardTracker is  ReentrancyGuard, IRewardTracker, Ownable { //IERC20,
 
     function _claim(address _account, address /*_receiver*/) private returns (uint256) {
         _updateRewards(_account);
-
         uint256 tokenAmount = claimableReward[_account];
         claimableReward[_account] = 0;
+        claimedAmounts[_account] = claimedAmounts[_account].add(tokenAmount);
+
+        //calculate rebate quota
+        ( , uint256 _rebateQuota, address _rebateAccount) = IPID(pid).getFeeDet(_account, tokenAmount);
+        if (_rebateAccount != address(0)){
+            rebatedQuota[_rebateAccount] = rebatedQuota[_rebateAccount].add(_rebateQuota);
+            emit AddRebateQuota(_account, _rebateAccount, tokenAmount, _rebateQuota);
+        }
 
         if (tokenAmount > 0) {
             // IERC20(rewardToken).safeTransfer(_receiver, tokenAmount);

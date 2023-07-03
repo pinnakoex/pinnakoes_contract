@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
+import "../PIDData.sol";
 
 interface IPID {
     function scorePara(uint256 _paraId) external view returns (uint256);
@@ -19,6 +20,12 @@ interface IPID {
     function score(address _account) external view returns (uint256);
     function addressToTokenID(address _account) external view returns (uint256);
     function rankToDiscount(uint256 _rank) external view returns (uint256, uint256);
+    function pidDetail(address _account) external view returns (PIDData.PIDDetailed memory);
+    function exist(address _account) external view returns (bool);
+    function tradeVol(address _account, uint256 _day) external view returns (uint256);
+    function swapVol(address _account, uint256 _day) external view returns (uint256);
+    function totalTradeVol(uint256 _day) external view returns (uint256);
+    function totalSwapVol(uint256 _day) external view returns (uint256);
 }
 
 

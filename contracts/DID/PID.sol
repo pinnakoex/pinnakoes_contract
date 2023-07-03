@@ -53,6 +53,15 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
     mapping(address => uint256) public override addressToTokenID;
     mapping(string => address) public refCodeOwner;
    
+
+    mapping(address => mapping(uint256 => uint256)) public override tradeVol;
+    mapping(address => mapping(uint256 => uint256)) public override swapVol;
+    mapping(uint256 => uint256) public override totalTradeVol;
+    mapping(uint256 => uint256) public override totalSwapVol;
+    
+    event UpdateTrade(address account, uint256 volUsd, uint256 day);
+    event UpdateSwap(address account, uint256 volUsd, uint256 day);
+    
     event ScoreUpdate(address _account, address _fromAccount, uint256 _addition, uint256 _reasonCode);
     event ScoreDecrease(address _account, uint256 _preScore, uint256 _latestScore, uint256 _timegap);
     event RankUpdate(address _account, uint256 _rankP, uint256 _rankA);
@@ -65,7 +74,7 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
         string memory defRC =  INFTUtils(nftUtils).genReferralCode(0);
         if (refCodeOwner[defRC]!= address(0))
             defRC = string(abi.encodePacked(defRC, cur_time));
-        PIDData.PIDStr memory _PIDStr = PIDData.PIDStr(address(this), "PID OFFICIAL", defRC, cur_time, block.timestamp, 0);
+        PIDData.PIDStr memory _PIDStr = PIDData.PIDStr(address(this), "PID OFFICIAL", defRC, cur_time, block.timestamp, 0, 0);
         _tokens.push(_PIDStr);
         addressToTokenID[address(this)] = 0;
         refCodeOwner[defRC] = address(this);
@@ -164,7 +173,7 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
         uint256 cur_time = block.timestamp;
 
         _balances[_newAccount] += 1;
-        PIDData.PIDStr memory _PIDStr = PIDData.PIDStr(_newAccount, _nickName, refC, cur_time, cur_time, 0);
+        PIDData.PIDStr memory _PIDStr = PIDData.PIDStr(_newAccount, _nickName, refC, cur_time, cur_time, 0, 0);
         _tokens.push(_PIDStr);
         addressToTokenID[_newAccount] = _tId;
         refCodeOwner[refC] = _newAccount;
@@ -234,6 +243,7 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
         incrementAddUint(_account, PIDData.ACCUM_POSITIONSIZE, _amount);
         (address[] memory _par, ) = getReferralForAccount(_account);
         updateScore(_account, _account, _amount.mul(scorePara[1 + _refCode]).div(1000).div(PIDData.USD_TO_SCORE_PRECISION), 1 + _refCode);
+        _updateTrade(_account, _amount);
         if (_par.length == 1)
             updateScore(_par[0], _account, _amount.mul(scorePara[2 + _refCode]).div(1000).div(PIDData.USD_TO_SCORE_PRECISION), 11 + _refCode);
     }
@@ -242,6 +252,7 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
         (address[] memory _par,  ) = getReferralForAccount(_account);
         incrementAddUint(_account, PIDData.ACCUM_SWAP, _amount);
         updateScore(_account, _account, _amount.mul(scorePara[3]).div(1000).div(PIDData.USD_TO_SCORE_PRECISION), 2);
+        _updateSwap(_account, _amount);
         if (_par.length == 1)
             updateScore(_par[0], _account, _amount.mul(scorePara[4]).div(1000).div(PIDData.USD_TO_SCORE_PRECISION), 12);
     }
@@ -253,6 +264,21 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
         if (_par.length == 1)
             updateScore(_par[0], _account, _amount.mul(scorePara[6 + _refCode]).div(1000).div(PIDData.USD_TO_SCORE_PRECISION), 13 + _refCode);
     }
+
+    function _updateTrade(address _account, uint256 _volUsd) private {
+        uint256 _day = block.timestamp.div(86400);
+        tradeVol[_account][_day] = tradeVol[_account][_day].add(_volUsd);
+        totalTradeVol[_day] = totalTradeVol[_day].add(_day);
+        emit UpdateTrade(_account, _volUsd, _day);
+    }
+
+    function _updateSwap(address _account, uint256 _volUsd) private {
+        uint256 _day = block.timestamp.div(86400);
+        swapVol[_account][_day] = swapVol[_account][_day].add(_volUsd);
+        totalSwapVol[_day] = totalSwapVol[_day].add(_day);
+        emit UpdateSwap(_account, _volUsd, _day);
+    }
+
 
     function getLatestScore(uint256 _score, uint256 _updTime) public view returns (uint256, uint256){
         uint256 cur_time = block.timestamp;
@@ -282,6 +308,7 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
             pidStr.latestUpdateTime = _updTime;
         }
         pidStr.score = pidStr.score.add(_amount);
+        pidStr.score_acum = pidStr.score_acum.add(_amount);
         emit ScoreUpdate(_account, _fromAccount, _amount, _reasonCode);
     }
 
@@ -332,7 +359,11 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
         return hasAddressSet(PIDData.VALID_SCORE_UPDATER,_contract);
     }
 
-    function pidDetail(address _account) public view returns (PIDData.PIDDetailed memory){
+    function exist(address _account) public view override returns (bool){
+        return balanceOf(_account) == 1;
+    }
+
+    function pidDetail(address _account) public view override returns (PIDData.PIDDetailed memory){
         PIDData.PIDDetailed memory tPd;
         if (balanceOf(_account) != 1) return tPd;
         PIDData.PIDStr storage pidStr = _tokens[addressToTokenID[_account]];
@@ -343,6 +374,7 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
         tPd.latestUpdateTime = pidStr.latestUpdateTime;
         tPd.score = score(_account);
         tPd.rank = rank(_account);
+        tPd.score_acum = pidStr.score_acum;
 
         tPd.tradeVolume = getAddUint(_account, PIDData.ACCUM_POSITIONSIZE);
         tPd.swapVolume = getAddUint(_account, PIDData.ACCUM_SWAP);
@@ -382,10 +414,6 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
     }
 
     function balanceOf(address owner) public view override returns (uint256) {
-        require(
-            owner != address(0),
-            "ERC721: balance query for the zero address"
-        );
         return _balances[owner];
     }
 

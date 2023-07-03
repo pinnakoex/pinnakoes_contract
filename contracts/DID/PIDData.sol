@@ -19,7 +19,6 @@ library PIDData {
     bytes32 constant ACCUM_POSITIONSIZE = keccak256("ACCUM_POSITIONSIZE");
     bytes32 constant ACCUM_SWAP = keccak256("ACCUM_SWAP");
     bytes32 constant ACCUM_ADDLIQUIDITY = keccak256("ACCUM_ADDLIQUIDITY");
-    bytes32 constant ACCUM_SCORE = keccak256("ACCUM_SCORE");
     bytes32 constant TIME_SOCRE_DEC= keccak256("TIME_SOCRE_DEC");
     bytes32 constant TIME_RANK_UPD = keccak256("TIME_RANK_UPD"); 
 
@@ -37,6 +36,7 @@ library PIDData {
         uint256 createTime;
         uint256 latestUpdateTime;
         uint256 score;
+        uint256 score_acum;
     }
 
 
@@ -47,6 +47,7 @@ library PIDData {
         uint256 createTime;
         uint256 latestUpdateTime;
         uint256 score;
+        uint256 score_acum;
 
         uint256 rank;
         uint256 tradeVolume;

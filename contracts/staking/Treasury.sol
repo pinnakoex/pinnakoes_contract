@@ -13,7 +13,7 @@ import "../core/interfaces/ILpManager.sol";
 import "../tokens/interfaces/IWETH.sol";
 import "./interfaces/IRewardRouter.sol";
 import "./interfaces/IRewardTracker.sol";
-
+import "../core/interfaces/IPlpManager.sol";
 
 
 interface ILPYield {
@@ -43,17 +43,11 @@ contract Treasury is Ownable {
     bool public openForPublic = true;
     mapping (address => bool) public isHandler;
     mapping (address => bool) public isManager;
-    uint8 method;
-
 
     event SellESUD(address token, uint256 eusd_amount, uint256 token_out_amount);
     event Swap(address token_src, address token_dst, uint256 amount_src, uint256 amount_out);
 
 
-
-    constructor(uint8 _method) {
-        method = _method;
-    }
 
     receive() external payable {
         // require(msg.sender == weth, "invalid sender");
@@ -137,30 +131,58 @@ contract Treasury is Ownable {
     }
 
     // ------ Funcs. processing plp
-    function buyPLP(address _token, address _plp_n, uint256 _amount) external onlyHandler returns (uint256) {
+    function buyPLP(address _plp_n, address _token, uint256 _amount, bytes[] memory _priceUpdateData) external onlyHandler returns (uint256) {
         require(isSupportedToken(_token), "not supported src token");
         if (_amount == 0)
             _amount = IERC20(_plp_n).balanceOf(address(this));
-        return _buyPLP(_token, _plp_n, _amount);
+        return _buyPLP(_token, _plp_n, _amount, _priceUpdateData);
     }
 
-    function _buyPLP(address _token, address _plp_n, uint256 _amount) internal returns (uint256) {
-        return 0;
+    function _buyPLP(address _plp_n, address _token, uint256 _amount, bytes[] memory _priceUpdateData) internal returns (uint256) {
+        require(plpToPlpManager[_plp_n]!= address(0), "PlpManager not set");
+        uint256 plp_ret = 0;
+        if (_token != address(0)){
+            IERC20(_token).approve(plpToPlpManager[_plp_n], _amount);
+            require(IERC20(_token).balanceOf(address(this)) >= _amount, "insufficient token to buy plp");
+            plp_ret = IPlpManager(plpToPlpManager[_plp_n]).addLiquidity(_token, _amount, 0, _priceUpdateData);
+        }
+
+        else{
+            require(address(this).balance >= _amount, "insufficient native token ");
+            plp_ret = IPlpManager(plpToPlpManager[_plp_n]).addLiquidityETH{value: _amount}(0,_priceUpdateData);
+        }
+        return plp_ret;
     }
 
-    function sellPLP(address _token_out, address _plp_n, uint256 _amount_sell) external onlyHandler returns (uint256) {
+    function sellPLP(address _token_out, address _plp_n, uint256 _amount_sell, bytes[] memory _priceUpdateData) external onlyHandler returns (uint256) {
         require(isSupportedToken(_token_out), "not supported out token");
         require(isSupportedToken(_plp_n), "not supported plp n");
-        return _sellPLP(_token_out, _plp_n, _amount_sell);
+        return _sellPLP(_token_out, _plp_n, _amount_sell, _priceUpdateData);
     }
 
-    function _sellPLP(address _token_out, address _plp_n, uint256 _amount_sell) internal returns (uint256) {
-        return 0;
+    function _sellPLP(address _token_out, address _plp_n, uint256 _amount_sell, bytes[] memory _priceUpdateData) internal returns (uint256) {
+        require(isSupportedToken(_token_out), "not supported src token");
+        require(plpToPlpManager[_plp_n]!= address(0), "PLP manager not set");
+        IERC20(_plp_n).approve(plpToPlpManager[_plp_n], _amount_sell);
+        require(IERC20(_plp_n).balanceOf(address(this)) >= _amount_sell, "insufficient plp to sell");
+        
+        uint256 token_ret = 0;
+        if (_token_out != address(0)){
+            token_ret = IPlpManager(plpToPlpManager[_plp_n]).removeLiquidity(_token_out, _amount_sell, 0, _priceUpdateData);
+        }
+        else{
+            token_ret = IPlpManager(plpToPlpManager[_plp_n]).removeLiquidityETH(_amount_sell, _priceUpdateData);
+        }
+        return token_ret;
     }
 
 
     // Func. public view
     function isSupportedToken(address _token) public view returns(bool){
         return supportedToken.contains(_token);
+    }
+
+    function aum() public pure returns (uint256){
+        return 300000e30;
     }
 }

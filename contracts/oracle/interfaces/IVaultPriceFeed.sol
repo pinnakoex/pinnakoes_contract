@@ -4,12 +4,10 @@ pragma solidity ^0.8.0;
 
 interface IVaultPriceFeed {   
     function getPrimaryPrice(address _token) external view  returns (uint256, bool, uint256);
-    function adjustmentBasisPoints(address _token) external view returns (uint256);
-    // function tokenPythKEY(address _token) external view returns (bytes32);
-    function isAdjustmentAdditive(address _token) external view returns (bool);
-    function setAdjustment(address _token, bool _isAdditive, uint256 _adjustmentBps) external;
-    function setSpreadBasisPoints(address _token, uint256 _spreadBasisPoints) external;
+    function setSpreadBasisPoints(address _token, uint256 _spreadBasisPoints,uint256 _priceSpreadBasisMax, uint256 _priceSpreadTimeStart, uint256 _priceSpreadTimeMax) external;
     function getPrice(address _token, bool _maximise,bool,bool) external view returns (uint256);
+    function getPriceWithTime(address _token, bool _maximise) external view returns (uint256, uint256);
+
     function getPriceUnsafe(address _token, bool _maximise, bool, bool _adjust) external view returns (uint256);
     function priceTime(address _token) external view returns (uint256);
     function priceVariancePer1Million(address _token) external view returns (uint256); //100 for 1%

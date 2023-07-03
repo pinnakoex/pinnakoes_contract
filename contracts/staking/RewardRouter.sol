@@ -27,9 +27,6 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
     using EnumerableSet for EnumerableSet.AddressSet;
     using EnumerableValues for EnumerableSet.AddressSet;
 
-    uint256 public cooldownDuration = 1 minutes;
-    mapping (address => uint256) public latestOperationTime;
-
 
     // address public weth;
     address public weth;
@@ -117,15 +114,16 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
         }
         return (_stakedPLPn, _stakedAmount, _poolRewardRate);
     }
+    
     function stakePlpn(address _plp_n, uint256 _plpAmount) external nonReentrant override returns (uint256) {
         require(_plpAmount > 0, "RewardRouter: invalid _amount");
         require(allWhitelistedPLPn.contains(_plp_n), "RewardTracker: invalid stake PLP Token"); 
         address account = msg.sender;
-        latestOperationTime[account] = block.timestamp;
         IRewardTracker(stakedPLPnTracker[_plp_n]).stakeForAccount(account, account, _plp_n, _plpAmount);
         emit UserStakePlp(account, _plpAmount);
         return _plpAmount;
     }
+    
     function unstakePlpn(address _plp_n, uint256 _tokenInAmount) external nonReentrant override returns (uint256) {
         address account = msg.sender;
         require(_tokenInAmount > 0, "RewardRouter: invalid _plpAmount");
@@ -134,6 +132,7 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
         emit UserUnstakePlp(account, _tokenInAmount);
         return _tokenInAmount;
     }
+
     function claimPlpnStakingRewardForAccount(address _account) external nonReentrant returns (uint256) {
         address account =_account == address(0) ? msg.sender : _account;
         return _claimPlp(account);
@@ -149,8 +148,6 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
             uint256 this_reward  = IRewardTracker(stakedPLPnTracker[whitelistedPLPn[i]]).claimForAccount(_account, _account);
             totalClaimReward = totalClaimReward.add(this_reward);
         }
-        require(IERC20(rewardToken).balanceOf(address(this)) > totalClaimReward, "insufficient aPNK");
-        IERC20(rewardToken).safeTransfer(_account, totalClaimReward);
         return totalClaimReward;
     }
     function claimablePlpList(address _account) external view returns (address[] memory, uint256[] memory) {
@@ -208,81 +205,6 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
         IUserFeeResv(userFeeResv).claim(msg.sender);
     }
     //End of Rebate&Discount Fee Reward for PID --------------------------------------------------------------------------------------------- 
-
-
-
-    // function claimEE(address[] memory _PLPlist) public nonReentrant returns (uint256, uint256) {
-    //     address account = msg.sender;
-    //     return _claimEEforAccount(account, _PLPlist);
-    // }
-
-    // function _claimEEforAccount(address _account, address[] memory _PLPlist)  internal returns (uint256, uint256) {
-    //     require(block.timestamp.sub(latestOperationTime[_account]) > cooldownDuration, "Cooldown Time Required.");
-    //     for (uint80 i = 0; i < _PLPlist.length; i++) {
-    //         require(allWhitelistedPLPn.contains(_PLPlist[i]), "invalid elp");
-    //     }
-
-    //     // uint256 this_reward  = IRewardTracker(stakedPLPnTracker[_tokenIn]).claimForAccount(account, account);
-    //     uint256 eusdClaimReward = 0;
-    //     for (uint80 i = 0; i < _PLPlist.length; i++) {
-    //         uint256 this_reward  = IRewardTracker(stakedPLPnTracker[_PLPlist[i]]).claimForAccount(_account, _account);
-    //         eusdClaimReward = eusdClaimReward.add(this_reward);
-    //     }
-    //     require(IERC20(rewardToken).balanceOf(address(this)) > eusdClaimReward, "insufficient aPNK");
-    //     IERC20(rewardToken).safeTransfer(_account, eusdClaimReward);
-    //     address account =_account == address(0) ? msg.sender : _account;        
-    //     uint256 pnkClaimReward = 0;
-    //     for (uint80 i = 0; i < _PLPlist.length; i++) {
-    //         // uint256 this_reward  = IInstStaking(_PLPlist[i]).claimForAccount(account);
-    //         // pnkClaimReward = pnkClaimReward.add(this_reward);
-    //     }
-    //     return (pnkClaimReward, eusdClaimReward);
-    // }
-
-    // function claimableFeeListForAccount(address _account) external view returns (address[] memory, uint256[] memory) {
-    //     uint256 poolLength = whitelistedPLPn.length;
-    //     address account =_account == address(0) ? msg.sender : _account;
-    //     address[] memory _stakedPLPn = new address[](poolLength);
-    //     uint256[] memory _rewardList = new uint256[](poolLength);
-    //     for (uint80 i = 0; i < whitelistedPLPn.length; i++) {
-    //         // _rewardList[i] = IPLP(whitelistedPLPn[i]).claimable(account);
-    //         _stakedPLPn[i] = whitelistedPLPn[i];
-    //     }
-    //     return (_stakedPLPn, _rewardList);
-    // }
-
-
-    // function claimableFeeList() external view returns (address[] memory, uint256[] memory) {
-    //     uint256 poolLength = whitelistedPLPn.length;
-    //     address account = msg.sender;
-    //     address[] memory _stakedPLPn = new address[](poolLength);
-    //     uint256[] memory _rewardList = new uint256[](poolLength);
-    //     for (uint80 i = 0; i < whitelistedPLPn.length; i++) {
-    //         // _rewardList[i] = IPLP(whitelistedPLPn[i]).claimable(account);
-    //         _stakedPLPn[i] = whitelistedPLPn[i];
-    //     }
-    //     return (_stakedPLPn, _rewardList);
-    // }
-
-    // function claimAllForAccount(address _account) external nonReentrant returns ( uint256[] memory) {
-    //     address account =_account == address(0) ? msg.sender : _account;
-    //     uint256[] memory reward = new uint256[](2);
-    //     // reward[0] = _claimPNK(account);
-    //     // reward[1] = _claimPlpFee(account);
-    //     return reward;
-    // }
-    // function claimAll() external nonReentrant override returns ( uint256[] memory) {
-    //     address account = msg.sender ;
-    //     uint256[] memory reward = new uint256[](2);
-    //     // reward[0] = _claimPNK(account);
-    //     // reward[1] = _claimPlpFee(account);
-    //     return reward;
-    // }
-
-
-
-
-
 
 
 

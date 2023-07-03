@@ -21,7 +21,7 @@ interface IVaultTarget {
     function vaultUtils() external view returns (address);
 }
 
-contract Reader is Initializable  {
+contract Reader  {
     using SafeMath for uint256;
 
     uint256 public constant BASIS_POINTS_DIVISOR = 10000;
@@ -40,21 +40,10 @@ contract Reader is Initializable  {
 
     }
 
-    function initialize(address _priceFeed, address _rewardRouter) public initializer {
+    constructor (address _priceFeed, address _rewardRouter) {
         priceFeed = _priceFeed;
         rewardRouter = _rewardRouter;
     }
-
-    // function getFeeInfo(address _account) public view returns (SystemFeeInfo memory, UserFeeInfo memory){
-
-
-    // }
-
-
-
-
-
-
 
 
     function getMaxAmountIn(IVault _vault, address _tokenIn, address _tokenOut) public view returns (uint256) {
@@ -186,8 +175,8 @@ contract Reader is Initializable  {
             amounts[i * propsLength + 1] = _priceFeed.getPriceUnsafe(token, false, true, false);
             amounts[i * propsLength + 2] = amounts[i * propsLength];
             amounts[i * propsLength + 3] = amounts[i * propsLength + 1];
-            amounts[i * propsLength + 4] = _priceFeed.isAdjustmentAdditive(token) ? 1 : 0;
-            amounts[i * propsLength + 5] = _priceFeed.adjustmentBasisPoints(token);
+            amounts[i * propsLength + 4] = 0;
+            amounts[i * propsLength + 5] = 0;
         }
         return amounts;
     }

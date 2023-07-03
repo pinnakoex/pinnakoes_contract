@@ -20,5 +20,9 @@ interface IVaultStorage {
     function maxGlobalShortSizes(address) external view returns (uint256);
     function maxGlobalLongSizes(address) external view returns (uint256);
     function getTradingLimit(address _token) external view returns (VaultMSData.TradingLimit memory);
+    function setTokenConfig(address _token, uint256 _tokenWeight, bool _isStable, bool _isFundingToken, bool _isTradingToken) external;
+    function tradingTokenList() external view returns (address[] memory);
+    function fundingTokenList() external view returns (address[] memory);
+    function clearTokenConfig(address _token) external;
 
 }

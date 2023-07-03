@@ -16,7 +16,6 @@ interface IVaultUtils {
     function validateDecreasePosition(VaultMSData.Position memory _position, uint256 _sizeDelta, uint256 _collateralDelta) external view;
     // function validateLiquidation(address _account, address _collateralToken, address _indexToken, bool _isLong, bool _raise) external view returns (uint256, uint256);
     function validateLiquidation(bytes32 _key, bool _raise) external view returns (uint256, uint256, int256);
-    function getImpactedPrice(address _token, uint256 _sizeDelta, uint256 _price, bool _isLong) external view returns (uint256);
 
     function getReserveDelta(address _collateralToken, uint256 _sizeUSD, uint256 _colUSD, uint256 _takeProfitRatio) external view returns (uint256);
     function getInitialPosition(address _account, address _collateralToken, address _indexToken, uint256 _sizeDelta, bool _isLong, uint256 _price) external view returns (VaultMSData.Position memory);
@@ -60,9 +59,9 @@ interface IVaultUtils {
 
     function errors(uint256) external view returns (string memory);
 
-    function spreadBasis(address) external view returns (uint256);
-    function maxSpreadBasis(address) external view returns (uint256);
-    function minSpreadCalUSD(address) external view returns (uint256);
+    // function spreadBasis(address) external view returns (uint256);
+    // function maxSpreadBasis(address) external view returns (uint256);
+    // function minSpreadCalUSD(address) external view returns (uint256);
     function premiumBasisPointsPerHour() external view returns (uint256);
     function premiumBasisPointsPerSec() external view returns (uint256);
     function maxPremiumBasisErrorUSD() external view returns (uint256);
@@ -106,4 +105,9 @@ interface IVaultUtils {
 
     function taxDuration() external view returns (uint256);
     function taxMax() external view returns (uint256);
+    function nonProfitTime() external view returns (uint256);
+
+    function sizeSpreadBasisMax(address _token) external view returns (uint256);
+    function sizeSpreadGapStart(address _token) external view returns (uint256);
+    function sizeSpreadGapMax(address _token) external view returns (uint256);
 }

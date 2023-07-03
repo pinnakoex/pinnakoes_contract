@@ -5,24 +5,18 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "../tokens/interfaces/IMintable.sol";
-import "../utils/EnumerableValues.sol";
 import "./VaultMSData.sol";
 import "./interfaces/IVault.sol";
 import "./interfaces/IVaultUtils.sol";
-import "../oracle/interfaces/IVaultPriceFeed.sol";
 import "./interfaces/IVaultStorage.sol";
+import "../oracle/interfaces/IVaultPriceFeed.sol";
 import "../DID/interfaces/IPID.sol";
 import "../fee/interfaces/IUserFeeResv.sol";
 
 contract Vault is IVault, Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
-    using EnumerableSet for EnumerableSet.Bytes32Set;
-    using EnumerableValues for EnumerableSet.Bytes32Set;
-    using EnumerableSet for EnumerableSet.AddressSet;
-    using EnumerableValues for EnumerableSet.AddressSet;
 
     uint8 public override baseMode;
 
@@ -34,22 +28,21 @@ contract Vault is IVault, Ownable {
     address public userFeeResv;
     address public feeOutToken;
 
+    mapping(address => bool) public override isFundingToken;
+    mapping(address => bool) public override isTradingToken;
     mapping(address => bool) public override isManager;
     mapping(address => bool) public override approvedRouters;
 
     uint256 public override totalTokenWeights;
-    EnumerableSet.AddressSet tradingTokens;
-    EnumerableSet.AddressSet fundingTokens;
-    EnumerableSet.AddressSet allTokens;
-    mapping(address => VaultMSData.TokenBase) tokenBase;
     uint256 public override guaranteedUsd;
-
+    uint256 public override globalShortSize;
+    uint256 public override globalLongSize;
+    mapping(address => int256) public override premiumFeeBalance;
+    mapping(address => VaultMSData.TokenBase) tokenBase;
     mapping(address => VaultMSData.TradingFee) tradingFee;
     mapping(bytes32 => VaultMSData.Position) positions;
     mapping(address => VaultMSData.TradingRec) tradingRec;
-    mapping(address => int256) override premiumFeeBalance;
-    uint256 public override globalShortSize;
-    uint256 public override globalLongSize;
+
 
 
     modifier onlyManager() {
@@ -80,8 +73,8 @@ contract Vault is IVault, Ownable {
     event CollectPremiumFee(address account,uint256 _size, int256 _entryPremiumRate, int256 _premiumFeeUSD);
     event SetManager(address account, bool state);
     event SetRouter(address account, bool state);
-    event SetTokenConfig(address _token, uint256 _tokenWeight, bool _isStable, bool _isFundingToken, bool _isTradingToken);
-    event ClearTokenConfig(address _token, bool del);
+    // event SetTokenConfig(address _token, uint256 _tokenWeight, bool _isStable, bool _isFundingToken, bool _isTradingToken);
+    // event ClearTokenConfig(address _token, bool del);
 
     constructor(uint8 _baseMode) {
         baseMode = _baseMode;
@@ -109,44 +102,30 @@ contract Vault is IVault, Ownable {
     }
 
     function setTokenConfig(address _token, uint256 _tokenWeight, bool _isStable, bool _isFundingToken, bool _isTradingToken) external override onlyOwner{
-        if (!allTokens.contains(_token)){
-            allTokens.add(_token);
-        }
-        if (_isTradingToken && !tradingTokens.contains(_token)) {
-            tradingTokens.add(_token);
-        }
-        if (_isFundingToken && !fundingTokens.contains(_token)) {
-            fundingTokens.add(_token);
-        }
         VaultMSData.TokenBase storage tBase = tokenBase[_token];
-        
+        IVaultStorage(vaultStorage).setTokenConfig(_token, _tokenWeight, _isStable, _isFundingToken, _isTradingToken);
         if (_isFundingToken){
             totalTokenWeights = totalTokenWeights.add(_tokenWeight).sub(tBase.weight);
             tBase.weight = _tokenWeight;
         }
         else
             tBase.weight = 0;
-
         tBase.isStable = _isStable;
         tBase.isFundable = _isFundingToken;
+
+        isFundingToken[_token] = _isFundingToken;
+        isTradingToken[_token] = _isTradingToken;
+
         getMaxPrice(_token);// validate price feed
-        emit SetTokenConfig(_token, _tokenWeight, _isStable, _isFundingToken, _isTradingToken);
+        // emit SetTokenConfig(_token, _tokenWeight, _isStable, _isFundingToken, _isTradingToken);
     }
 
     function clearTokenConfig(address _token, bool _del) external onlyOwner{
-        if (tradingTokens.contains(_token)) {
-            tradingTokens.remove(_token);
-        }
-        if (fundingTokens.contains(_token)) {
-            totalTokenWeights = totalTokenWeights.sub(tokenBase[_token].weight);
-            fundingTokens.remove(_token);
-        } 
-        if (allTokens.contains(_token)){
-            allTokens.remove(_token);
-        } 
+        IVaultStorage(vaultStorage).clearTokenConfig( _token);
+        isFundingToken[_token] = false;
+        isTradingToken[_token] = false;
         if (_del)
             delete tokenBase[_token];
-        emit ClearTokenConfig(_token, _del);
     }
     // the governance controlling this function should have a timelock
     function upgradeVault(address _newVault, address _token, uint256 _amount) external onlyOwner{
@@ -158,7 +137,7 @@ contract Vault is IVault, Ownable {
 
     //---------- FUNCTIONS FOR MANAGER ----------
     function buyUSD(address _token) external override onlyManager returns (uint256) {
-        _validate(fundingTokens.contains(_token), 16);
+        _validate(isFundingToken[_token], 16);
         updateRate(_token);//update first to calculate fee
         uint256 tokenAmount = _transferIn(_token);
         _validate(tokenAmount > 0, 17);
@@ -172,7 +151,7 @@ contract Vault is IVault, Ownable {
     }
 
     function sellUSD(address _token, address _receiver,  uint256 _usdAmount) external override onlyManager returns (uint256) {
-        _validate(fundingTokens.contains(_token), 19);
+        _validate(isFundingToken[_token], 19);
         _validate(_usdAmount > 0, 20);
         updateRate(_token);
         uint256 redemptionAmount = usdToTokenMin(_token, _usdAmount);
@@ -206,9 +185,7 @@ contract Vault is IVault, Ownable {
         vaultUtils.validateIncreasePosition(_collateralToken, _indexToken, position.size, _sizeDelta ,_isLong);
 
         uint256 price = _isLong ? getMaxPrice(_indexToken) : getMinPrice(_indexToken);
-        price = vaultUtils.getImpactedPrice(_indexToken, 
-            _sizeDelta.add(_isLong ? tradingRec[_indexToken].longSize : tradingRec[_indexToken].shortSize), price, _isLong);
-            
+          
         if (position.size == 0) {
             position.account = _account;
             position.averagePrice = price;
@@ -388,23 +365,18 @@ contract Vault is IVault, Ownable {
     
     //---------- PUBLIC FUNCTIONS ----------
     function directPoolDeposit(address _token) external override {
-        _validate(fundingTokens.contains(_token), 14);
+        _validate(isFundingToken[_token], 14);
         uint256 tokenAmount = _transferIn(_token);
         _validate(tokenAmount > 0, 15);
         _increasePoolAmount(_token, tokenAmount);
         emit DirectPoolDeposit(_token, tokenAmount);
     }
-    function tradingTokenList() external view override returns (address[] memory) {
-        return tradingTokens.valuesAt(0, tradingTokens.length());
-    }
-    function fundingTokenList() external view override returns (address[] memory) {
-        return fundingTokens.valuesAt(0, fundingTokens.length());
-    }
+
     function getMaxPrice(address _token) public view override returns (uint256) {
-        return IVaultPriceFeed(priceFeed).getPrice(_token, true, false, false);
+        return IVaultPriceFeed(priceFeed).getPrice(_token, true, true, true);
     }
     function getMinPrice(address _token) public view override returns (uint256) {
-        return IVaultPriceFeed(priceFeed).getPrice(_token, false, false, false);
+        return IVaultPriceFeed(priceFeed).getPrice(_token, false, true, true);
     }
     function tokenToUsdMin(address _token, uint256 _tokenAmount) public view override returns (uint256) {
         uint256 price = getMinPrice(_token);
@@ -426,30 +398,24 @@ contract Vault is IVault, Ownable {
     function getPositionStructByKey(bytes32 _key) public override view returns (VaultMSData.Position memory){
         return positions[_key];
     }
-    function getPositionStruct(address _account, address _collateralToken, address _indexToken, bool _isLong) public override view returns (VaultMSData.Position memory){
-        return positions[vaultUtils.getPositionKey(_account, _collateralToken, _indexToken, _isLong, 0)];
-    }
+    // function getPositionStruct(address _account, address _collateralToken, address _indexToken, bool _isLong) public override view returns (VaultMSData.Position memory){
+    //     return positions[vaultUtils.getPositionKey(_account, _collateralToken, _indexToken, _isLong, 0)];
+    // }
     function getTokenBase(address _token) public override view returns (VaultMSData.TokenBase memory){
         return tokenBase[_token];
     }
     function getTradingRec(address _token) public override view returns (VaultMSData.TradingRec memory){
         return tradingRec[_token];
     }
-    function isFundingToken(address _token) public view override returns(bool){
-        return fundingTokens.contains(_token);
-    }
-    function isTradingToken(address _token) public view override returns(bool){
-        return tradingTokens.contains(_token);
-    }
     function getTradingFee(address _token) public override view returns (VaultMSData.TradingFee memory){
         return tradingFee[_token];
     }
-    function getUserKeys(address _account, uint256 _start, uint256 _end) external override view returns (bytes32[] memory){
-        return IVaultStorage(vaultStorage).getUserKeys(_account, _start, _end);
-    }
-    function getKeys(uint256 _start, uint256 _end) external override view returns (bytes32[] memory){
-        return IVaultStorage(vaultStorage).getKeys(_start, _end);
-    }
+    // function getUserKeys(address _account, uint256 _start, uint256 _end) external override view returns (bytes32[] memory){
+    //     return IVaultStorage(vaultStorage).getUserKeys(_account, _start, _end);
+    // }
+    // function getKeys(uint256 _start, uint256 _end) external override view returns (bytes32[] memory){
+    //     return IVaultStorage(vaultStorage).getKeys(_start, _end);
+    // }
     //---------- END OF PUBLIC VIEWS ----------
 
 
@@ -457,13 +423,13 @@ contract Vault is IVault, Ownable {
 
     //---------------------------------------- PRIVATE Functions --------------------------------------------------
     function updateRate(address _token) public override {
-        _validate(tradingTokens.contains(_token) || fundingTokens.contains(_token), 7);
+        _validate(isTradingToken[_token] || isFundingToken[_token], 7);
         tradingFee[_token] = vaultUtils.updateRate(_token);
     }
 
     function _swap(address _tokenIn,  address _tokenOut, address _receiver ) private returns (uint256) {
-        _validate(fundingTokens.contains(_tokenIn), 24);
-        _validate(fundingTokens.contains(_tokenOut), 25);
+        _validate(isFundingToken[_tokenIn], 24);
+        _validate(isFundingToken[_tokenOut], 25);
         _validate(_tokenIn != _tokenOut, 26);
         updateRate(_tokenIn);
         updateRate(_tokenOut);
@@ -565,18 +531,18 @@ contract Vault is IVault, Ownable {
 
     function _collectMarginFees(bytes32 _key, uint256 _sizeDelta) private returns (uint256) {
         VaultMSData.Position storage _position = positions[_key];
-        int256 _premiumFee = vaultUtils.getPremiumFee(_position, tradingFee[_position.indexToken]);
-        _position.accPremiumFee += _premiumFee;
-        if (_premiumFee > 0){
-            _validate(_position.collateral >= uint256(_premiumFee), 29);
-            // _decreaseGuaranteedUsd(_position.collateralToken, uint256(_premiumFee));
-            _position.collateral = _position.collateral.sub(uint256(_premiumFee));
-        }else if (_premiumFee < 0) {
-            // _increaseGuaranteedUsd(_position.collateralToken, uint256(-_premiumFee));
-            _position.collateral = _position.collateral.add(uint256(-_premiumFee));
-        }
-        premiumFeeBalance[_position.indexToken] = premiumFeeBalance[_position.indexToken] + _premiumFee;
-        emit CollectPremiumFee(_position.account, _position.size, _position.entryPremiumRateSec, _premiumFee);
+        // int256 _premiumFee = vaultUtils.getPremiumFee(_position, tradingFee[_position.indexToken]);
+        // _position.accPremiumFee += _premiumFee;
+        // if (_premiumFee > 0){
+        //     _validate(_position.collateral >= uint256(_premiumFee), 29);
+        //     // _decreaseGuaranteedUsd(_position.collateralToken, uint256(_premiumFee));
+        //     _position.collateral = _position.collateral.sub(uint256(_premiumFee));
+        // }else if (_premiumFee < 0) {
+        //     // _increaseGuaranteedUsd(_position.collateralToken, uint256(-_premiumFee));
+        //     _position.collateral = _position.collateral.add(uint256(-_premiumFee));
+        // }
+        // premiumFeeBalance[_position.indexToken] = premiumFeeBalance[_position.indexToken] + _premiumFee;
+        // emit CollectPremiumFee(_position.account, _position.size, _position.entryPremiumRateSec, _premiumFee);
 
         uint256 feeUsd = vaultUtils.getPositionFee(_position, _sizeDelta,tradingFee[_position.indexToken]);
         _position.accPositionFee = _position.accPositionFee.add(feeUsd);
@@ -587,10 +553,8 @@ contract Vault is IVault, Ownable {
         //decrease 
         _position.collateral = _position.collateral.sub(feeUsd);
         _decreaseGuaranteedUsd(_position.collateralToken, feeUsd);
-
         //decrease pool into fee
         _collectFeeResv(_position.account, feeOutToken, feeUsd);
-
         return feeUsd;
     }
 
@@ -644,12 +608,12 @@ contract Vault is IVault, Ownable {
         _validate(_amount > 0, 53);
         tokenBase[_token].reservedAmount = tokenBase[_token].reservedAmount.add(_amount);
         _validate(tokenBase[_token].reservedAmount <= tokenBase[_token].poolAmount, 52);
-        emit IncreaseReservedAmount(_token, _amount);
+        // emit IncreaseReservedAmount(_token, _amount);
     }
 
     function _decreaseReservedAmount(address _token, uint256 _amount) private {
         tokenBase[_token].reservedAmount = tokenBase[_token].reservedAmount.sub( _amount, "Vault: insufficient reserve" );
-        emit DecreaseReservedAmount(_token, _amount);
+        // emit DecreaseReservedAmount(_token, _amount);
     }
 
     function _validate(bool _condition, uint256 _errorCode) private view {

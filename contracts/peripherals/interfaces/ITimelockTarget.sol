@@ -7,6 +7,7 @@ interface ITimelockTarget {
     function transferOwnership(address _gov) external;
     function mint(address _receiver, uint256 _amount) external;
     function withdrawToken(address _token, address _account, uint256 _amount) external;
+    
     function setMinter(address _minter, bool _isActive) external;
 
     function setPositionKeeper(address _keeper, bool _status) external;

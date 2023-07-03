@@ -31,7 +31,9 @@ contract VaultStorage is Ownable, IVaultStorage {
     mapping(address => uint256) public override maxGlobalLongSizes;
     mapping(address => VaultMSData.TradingLimit) tradingLimit;
   
-
+    EnumerableSet.AddressSet tradingTokens;
+    EnumerableSet.AddressSet fundingTokens;
+    EnumerableSet.AddressSet allTokens;
 
     IVault public vault;
     
@@ -75,6 +77,29 @@ contract VaultStorage is Ownable, IVaultStorage {
         return tradingLimit[_token];
     }
 
+    function setTokenConfig(address _token, uint256 _tokenWeight, bool _isStable, bool _isFundingToken, bool _isTradingToken) external override onlyVault{
+        if (!allTokens.contains(_token)){
+            allTokens.add(_token);
+        }
+        if (_isTradingToken && !tradingTokens.contains(_token)) {
+            tradingTokens.add(_token);
+        }
+        if (_isFundingToken && !fundingTokens.contains(_token)) {
+            fundingTokens.add(_token);
+        }
+    }
+
+    function clearTokenConfig(address _token) external override onlyVault{
+        if (tradingTokens.contains(_token)) {
+            tradingTokens.remove(_token);
+        }
+        if (fundingTokens.contains(_token)) {
+            fundingTokens.remove(_token);
+        } 
+        if (allTokens.contains(_token)){
+            allTokens.remove(_token);
+        } 
+    }
 
     function delKey(address _account, bytes32 _key) external override onlyVault{
         if (positionKeys.contains(_key))
@@ -107,5 +132,10 @@ contract VaultStorage is Ownable, IVaultStorage {
         uint256 _kLength = positionKeys.length();
         return positionKeys.valuesAt(_start, _end > _kLength ? _kLength : _end);
     }
-
+    function tradingTokenList() external view override returns (address[] memory) {
+        return tradingTokens.valuesAt(0, tradingTokens.length());
+    }
+    function fundingTokenList() external view override returns (address[] memory) {
+        return fundingTokens.valuesAt(0, fundingTokens.length());
+    }
 }
