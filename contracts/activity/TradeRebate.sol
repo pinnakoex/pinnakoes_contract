@@ -19,6 +19,7 @@ contract TradeRebate is ReentrancyGuard, Ownable{
     address public pid;
 
     mapping (uint256 => uint256) public roundRewards;
+    mapping(uint256 => uint256) public roundClaimed;
 
     mapping (address => mapping(uint256 => uint256)) public userRoundClaimed;
 
@@ -59,6 +60,8 @@ contract TradeRebate is ReentrancyGuard, Ownable{
 
         uint256 userVol = IPID(pid).tradeVol(_account, _roundId);
         userVol = userVol.add(IPID(pid).swapVol(_account, _roundId));
+        require(userVol <= totalVol, "invalid trading volume");
+       
         uint256 _userRewd = roundRewards[_roundId].mul(userVol).div(totalVol);
         return _userRewd > userRoundClaimed[_account][_roundId] ? _userRewd.sub(userRoundClaimed[_account][_roundId]) : 0;
     }
@@ -71,6 +74,8 @@ contract TradeRebate is ReentrancyGuard, Ownable{
         if (claimableRew < 1)
             return 0;
         require(IERC20(rewardToken).balanceOf(address(this)) > claimableRew, "insufficient reward token");
+        roundClaimed[_roundId] = roundClaimed[_roundId].add(claimableRew);
+        require(roundClaimed[_roundId] <= roundRewards[_roundId], "insufficient round rewards");
 
         userRoundClaimed[_account][_roundId] = userRoundClaimed[_account][_roundId].add(claimableRew);
         IERC20(rewardToken).safeTransfer(_account, claimableRew);
