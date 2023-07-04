@@ -268,14 +268,14 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
     function _updateTrade(address _account, uint256 _volUsd) private {
         uint256 _day = block.timestamp.div(86400);
         tradeVol[_account][_day] = tradeVol[_account][_day].add(_volUsd);
-        totalTradeVol[_day] = totalTradeVol[_day].add(_volUsd);
+        totalTradeVol[_day] = totalTradeVol[_day].add(_day);
         emit UpdateTrade(_account, _volUsd, _day);
     }
 
     function _updateSwap(address _account, uint256 _volUsd) private {
         uint256 _day = block.timestamp.div(86400);
         swapVol[_account][_day] = swapVol[_account][_day].add(_volUsd);
-        totalSwapVol[_day] = totalSwapVol[_day].add(_volUsd);
+        totalSwapVol[_day] = totalSwapVol[_day].add(_day);
         emit UpdateSwap(_account, _volUsd, _day);
     }
 
@@ -365,7 +365,7 @@ contract PID is ReentrancyGuard, Ownable, IERC721, IERC721Metadata, IPID, DataSt
 
     function pidDetail(address _account) public view override returns (PIDData.PIDDetailed memory){
         PIDData.PIDDetailed memory tPd;
-        if (balanceOf(_account) != 1) return tPd;
+        if (_account == address(0) || balanceOf(_account) != 1) return tPd;
         PIDData.PIDStr storage pidStr = _tokens[addressToTokenID[_account]];
         tPd.owner = pidStr.owner;
         tPd.nickName = pidStr.nickName;

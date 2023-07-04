@@ -30,6 +30,7 @@ contract RewardPool is
         uint256 amount;
         uint256 rank;
         uint256 totalAmount;
+        uint256 boost;
     }
 
     mapping(address => uint256) public override stakedAmounts;
@@ -50,6 +51,7 @@ contract RewardPool is
     address public rewardToken;
 
     uint256 public totalDepositSupply;
+    uint256 public totalShareSupply;
     mapping(address => mapping(address => uint256)) public allowances;
 
     bool public inPrivateStakingMode;
@@ -81,12 +83,19 @@ contract RewardPool is
         rankIntegral[4] = 160;
         rankIntegral[5] = 180;
         rankIntegral[6] = 200;
+        rankIntegral[7] = 230;
+        rankIntegral[8] = 260;
+        rankIntegral[9] = 300;
 
         _updateRewards(address(0));
     }
 
     function setHandler(address _handler, bool _isActive) external onlyOwner {
         isHandler[_handler] = _isActive;
+    }
+
+    function setMaxPeriod(uint256 _maxPeriod) external onlyOwner {
+        maxPeriod = _maxPeriod;
     }
 
     function setRankIntegral(
@@ -165,6 +174,7 @@ contract RewardPool is
             revert("RewardTracker: action not enabled");
         }
         require(_depositToken == depositToken, "Invalid deposit token");
+        _claim(msg.sender, msg.sender);
         _unstake(msg.sender, _depositToken, _amount, msg.sender);
     }
 
@@ -186,12 +196,9 @@ contract RewardPool is
         _updateUserInfo(_account);
     }
 
-    function updateUserInfo(
-        address _account
-    ) external nonReentrant {
+    function updateUserInfo(address _account) external nonReentrant {
         _updateUserInfo(_account);
     }
-
 
     function claim(
         address _receiver
@@ -214,7 +221,7 @@ contract RewardPool is
         address _account
     ) external view override returns (uint256) {
         uint256 stakedAmount = stakedAmounts[_account];
-        uint256 supply = totalDepositSupply;
+        uint256 supply = totalShareSupply;
         if (supply < 1) {
             return 0;
         }
@@ -301,29 +308,8 @@ contract RewardPool is
 
         stakedAmounts[_account] = stakedAmounts[_account].add(_amount);
         // depositBalances[_account][_depositToken] = depositBalances[_account][_depositToken].add(_amount);
-        totalDepositSupply = totalDepositSupply.add(user.totalAmount);
-    }
-
-    function _updateUserInfo(address _account) private {
-        UserInfo storage user = userInfo[_account];
-
-        PIDData.PIDDetailed memory pidDetail = IPID(pid).pidDetail(_account);
-        PIDData.PIDDetailed memory refpidData = IPID(pid).pidDetail(
-            pidDetail.ref
-        );
-
-        if (block.timestamp < user.stakeTime.add(maxPeriod)) {
-            user.rank = refpidData.rank > pidDetail.rank
-                ? refpidData.rank
-                : pidDetail.rank;
-        } else {
-            user.rank = pidDetail.rank;
-        }
-        uint256 oldTotal = user.totalAmount;
-        uint256 intergral = rankIntegral[user.rank];
-        user.totalAmount = user.amount.mul(intergral).div(100);
-        totalDepositSupply = totalDepositSupply.sub(oldTotal);
-        totalDepositSupply = totalDepositSupply.add(user.totalAmount);
+        totalShareSupply = totalShareSupply.add(user.totalAmount);
+        totalDepositSupply = totalDepositSupply.add(_amount);
     }
 
     function _unstake(
@@ -352,8 +338,9 @@ contract RewardPool is
         uint256 oldNumber = user.totalAmount;
         uint256 newNumber = user.amount.mul(intergral).div(100);
         user.totalAmount = newNumber;
-        totalDepositSupply = totalDepositSupply.sub(oldNumber);
-        totalDepositSupply = totalDepositSupply.add(newNumber);
+        totalShareSupply = totalShareSupply.sub(oldNumber);
+        totalShareSupply = totalShareSupply.add(newNumber);
+        totalDepositSupply = totalDepositSupply.sub(_amount);
         IERC20(_depositToken).safeTransfer(_receiver, _amount);
     }
 
@@ -368,7 +355,7 @@ contract RewardPool is
     function _updateRewards(address _account) private {
         uint256 blockReward = _pendingRewards();
         lastDistributionTime = block.timestamp;
-        uint256 supply = totalDepositSupply;
+        uint256 supply = totalShareSupply;
         UserInfo storage user = userInfo[_account];
 
         if (supply < 1) {
@@ -423,6 +410,42 @@ contract RewardPool is
 
                 cumulativeRewards[_account] = nextCumulativeReward;
             }
+        }
+    }
+
+    function _updateUserInfo(address _account) private {
+        UserInfo storage user = userInfo[_account];
+
+        uint256 rank = IPID(pid).rank(_account);
+        (address[] memory _par, ) = IPID(pid).getReferralForAccount(_account);
+        uint256 refRank = IPID(pid).rank(_par[0]);
+
+        if (block.timestamp < user.stakeTime.add(maxPeriod)) {
+            user.rank = refRank > rank ? refRank : rank;
+        } else {
+            user.rank = rank;
+        }
+        uint256 oldTotal = user.totalAmount;
+        uint256 intergral = rankIntegral[user.rank];
+        if (intergral == 0) {
+            intergral = 100;
+        }
+        user.boost = intergral;
+        user.totalAmount = user.amount.mul(intergral).div(100);
+        totalShareSupply = totalShareSupply.sub(oldTotal);
+        totalShareSupply = totalShareSupply.add(user.totalAmount);
+    }
+
+    function emergencyExit() external nonReentrant {
+        if (inPrivateStakingMode) {
+            revert("RewardTracker: action not enabled");
+        }
+        address _account = msg.sender;
+        uint256 stakedAmount = stakedAmounts[_account];
+        if (stakedAmount > 0) {
+            stakedAmounts[_account] = 0;
+            IERC20(depositToken).safeTransfer(_account, stakedAmount);
+            totalDepositSupply = totalDepositSupply.sub(stakedAmount);
         }
     }
 }

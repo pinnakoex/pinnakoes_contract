@@ -14,6 +14,10 @@ interface ITreasury {
     function redeem(address _token, uint256 _amount, address _dest) external;
 }
 
+interface ITreasuryUtils {
+    function aum() external view returns (uint256);
+}
+
 interface IPrice{
     function getTwap(address _token, uint256 _timestamp) external view returns (uint256);
     function getPriceLatest(address _token) external view returns (uint256);
@@ -50,6 +54,7 @@ contract Bond is Ownable {
     using Address for address;
 
     address public treasury;
+    address public treasuryUtil;
     address public twapPrice;
     address public instVesting;
     address public pnk;
@@ -72,10 +77,11 @@ contract Bond is Ownable {
         usdc = _usdc;
     }
 
-    function setAddress(address _treasury, address _twapPrice, address _instVesting) external onlyOwner{
+    function setAddress(address _treasury, address _twapPrice, address _instVesting, address _treasuryUtil) external onlyOwner{
         treasury = _treasury;
         twapPrice = _twapPrice;
         instVesting = _instVesting;
+        treasuryUtil = _treasuryUtil;
     }
 
     function setTime(uint256 _roundDuration, uint256 _releaseDuration) external onlyOwner{
@@ -120,7 +126,7 @@ contract Bond is Ownable {
 
 
     function capacity() public view returns (uint256){
-        return ITreasury(treasury).aum().mul(treasuryGap).div(RInfo.COM_PRECISION);
+        return ITreasuryUtils(treasuryUtil).aum().mul(treasuryGap).div(RInfo.COM_PRECISION);
     }
 
     function getRoundInfo() public view returns (RInfo.Round memory, uint256){

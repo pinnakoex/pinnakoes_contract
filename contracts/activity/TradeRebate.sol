@@ -19,12 +19,15 @@ contract TradeRebate is ReentrancyGuard, Ownable{
     address public pid;
 
     mapping (uint256 => uint256) public roundRewards;
-    mapping(uint256 => uint256) public roundClaimed;
 
     mapping (address => mapping(uint256 => uint256)) public userRoundClaimed;
+    mapping(uint256 => uint256) public roundClaimed;
+
+    mapping(address => uint256) public rebatedQuota;
 
     event ClaimRound(address _account, uint256 _roundId, address  _rewardToken, uint256 _rewards);
     event SetRound(uint256[] rounds, uint256[] rewards);
+    event AddRebateQuota(address account, address rebateAccount, uint256 claimedAmount, uint256 rebateQuota);
 
     function withdrawToken(address _account, address _token, uint256 _amount) external onlyOwner{
         IERC20(_token).safeTransfer(_account, _amount);
@@ -61,7 +64,7 @@ contract TradeRebate is ReentrancyGuard, Ownable{
         uint256 userVol = IPID(pid).tradeVol(_account, _roundId);
         userVol = userVol.add(IPID(pid).swapVol(_account, _roundId));
         require(userVol <= totalVol, "invalid trading volume");
-       
+        
         uint256 _userRewd = roundRewards[_roundId].mul(userVol).div(totalVol);
         return _userRewd > userRoundClaimed[_account][_roundId] ? _userRewd.sub(userRoundClaimed[_account][_roundId]) : 0;
     }
@@ -76,6 +79,22 @@ contract TradeRebate is ReentrancyGuard, Ownable{
         require(IERC20(rewardToken).balanceOf(address(this)) > claimableRew, "insufficient reward token");
         roundClaimed[_roundId] = roundClaimed[_roundId].add(claimableRew);
         require(roundClaimed[_roundId] <= roundRewards[_roundId], "insufficient round rewards");
+
+        (, uint256 _rebateQuota, address _rebateAccount) = IPID(pid).getFeeDet(
+            _account,
+            claimableRew
+        );
+        if (_rebateAccount != address(0)) {
+            rebatedQuota[_rebateAccount] = rebatedQuota[_rebateAccount].add(
+                _rebateQuota
+            );
+            emit AddRebateQuota(
+                _account,
+                _rebateAccount,
+                claimableRew,
+                _rebateQuota
+            );
+        }
 
         userRoundClaimed[_account][_roundId] = userRoundClaimed[_account][_roundId].add(claimableRew);
         IERC20(rewardToken).safeTransfer(_account, claimableRew);

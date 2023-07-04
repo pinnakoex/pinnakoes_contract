@@ -32,7 +32,6 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
     address public weth;
     address public pid;
     address public feeRouter;
-    address public rewardToken;
     address public userFeeResv;
     // address[] public allWhitelistedToken;
     // mapping (address => bool) public whitelistedToken;
@@ -66,8 +65,7 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
         require(msg.sender == weth, "Router: invalid sender");
     }
     
-    function initialize(address _rewardToken,  address _weth, address _pid, address _feeRouter, address _userFeeResv) external onlyOwner {
-        rewardToken = _rewardToken;
+    function initialize(address _weth, address _pid, address _feeRouter, address _userFeeResv) external onlyOwner {
         weth = _weth;
         pid = _pid;
         feeRouter = _feeRouter;
@@ -175,7 +173,7 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
 
 
     //Trading Fee Reward for PLP holders --------------------------------------------------------------------------------------------- 
-    function claimablePlpFee(address _plp, address _account) public nonReentrant returns (address[] memory, uint256[] memory) {
+    function claimablePlpFee(address _plp, address _account) public view returns (address[] memory, uint256[] memory) {
         address account =_account == address(0) ? msg.sender : _account;
         return IInstStaking(_plp).claimable(account);
     }
@@ -194,6 +192,15 @@ contract RewardRouter is ReentrancyGuard, Ownable, IRewardRouter {
         }
     }
     //End of Trading Fee Reward for PLP holders --------------------------------------------------------------------------------------------- 
+
+    function claimPlpAllForAccount(address _account) public nonReentrant {
+        address account =_account == address(0) ? msg.sender : _account;
+        _claimPlpFee(account);
+        _claimPlp(account);
+    }
+
+
+
 
 
     //Rebate & Discount Fee Reward for PID --------------------------------------------------------------------------------------------- 

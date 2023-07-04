@@ -35,6 +35,7 @@ contract InviteToEarn is Ownable {
     address public rewardToken;
  
     mapping(address => uint256) public consumedQuota;
+    mapping(address => uint256) public consumedScore;
 
     address[] public rebateActs;
     uint256[] public rebateActsWeights;
@@ -59,38 +60,74 @@ contract InviteToEarn is Ownable {
         rebateActsWeights = _rebateActsWeights;
     }
 
-    function quota(address _account) public view returns (uint256, uint256){
+    function quota(address _account) public view returns (uint256[]memory){
+        uint256[] memory qta = new uint256[](5);
         if (!IPID(pid).exist(_account))
-            return (0, 0);
-        uint256 _quota = mintQuota;
+            return qta;
+
+        qta[0] = quotaApproved(_account);
+        (qta[1], ) = quotaClaimableMax(_account);
+        if (consumedQuota[_account].add(qta[1]) > qta[0]){
+            qta[2] = qta[0] > consumedQuota[_account] ? qta[0].sub(consumedQuota[_account]) : 0;
+        }else{
+            qta[2] = qta[1];
+        }
+        uint256 maxQuota = qta[1] < qta[0] ? qta[1] : qta[0]; 
+        qta[2] = consumedQuota[_account] < maxQuota ? maxQuota.sub(consumedQuota[_account]) : 0;
+        qta[3] = qta[2].mul(10 ** IMintable(rewardToken).decimals()).div(QUOTA_PRECISION);
+        qta[4] = consumedQuota[_account];
+        return qta;
+    }
+
+    function quotaApproved(address _account) public view returns (uint256){
+        if (!IPID(pid).exist(_account))
+            return 0;
+        uint256 _quotaLargest = mintQuota;
         for(uint64 i = 0; i < rebateActs.length; i++){
             uint256 _qI = ITradeToEarn(rebateActs[i]).rebatedQuota(_account);
             _qI = _qI.mul(QUOTA_PRECISION).div(10**rebateActsDecimals[i]);
-            _quota = _quota.add(_qI.mul(rebateActsWeights[i]).div(COM_RATE_PRECISION));
-        }
+            _quotaLargest = _quotaLargest.add( _qI.mul(rebateActsWeights[i]).div(COM_RATE_PRECISION) );
+        } 
+        return _quotaLargest;
+    }
 
+    function quotaClaimableMax(address _account) public view returns (uint256, uint256){
+        if (!IPID(pid).exist(_account))
+            return (0,0);
         PIDData.PIDDetailed memory _pidDet = IPID(pid).pidDetail(_account);
-        _quota = _quota.add(_pidDet.score_acum.mul(QUOTA_PRECISION).div(socrePerQuota));
-        return (_quota, consumedQuota[_account]);
+        if (consumedScore[_account] > _pidDet.score_acum)
+            return (0,0);
+        
+        uint256 _qtMax = _pidDet.score_acum.sub(consumedScore[_account]).mul(QUOTA_PRECISION).div(socrePerQuota);
+        return (_qtMax, _pidDet.score_acum);
     }
 
     function claim() public {
         address _account = msg.sender;
         if (!IPID(pid).exist(_account))
             return ;
-        (uint256 _curQuota, ) = quota(_account);
-        if (_curQuota <= consumedQuota[_account]){
-            emit Claim(_account, 0, 0);
-            return ; 
+
+        uint256 qtApproved = quotaApproved(_account);
+        if (consumedQuota[_account] >= qtApproved){
+            emit Claim(_account, 1, 0);
+            return ;
         }
 
-        uint256 _rewardQuota= _curQuota.sub(consumedQuota[_account]);
-        consumedQuota[_account] = _curQuota;
+        (uint256 qtClaimable, uint256 accScore) = quotaClaimableMax(_account);
+        if (qtClaimable.add(consumedQuota[_account]) > qtApproved){
+            qtClaimable = qtApproved.sub(consumedQuota[_account]);
+        }
 
-        uint256 _rewardToken = _rewardQuota.mul(10 ** IMintable(rewardToken).decimals()).div(QUOTA_PRECISION);
-        require(_rewardToken >= IERC20(rewardToken).balanceOf(address(this)), "insufficient reward token in contract");
-        IERC20(rewardToken).transfer(_account, _rewardToken);
-        emit Claim(_account, _rewardQuota, _rewardToken);
+        if (qtClaimable < 1){
+            emit Claim(_account, 0, 0);
+            return ;
+        }
+        consumedQuota[_account] = consumedQuota[_account].add(qtClaimable);
+        consumedScore[_account] = accScore;
+        uint256 _rewardTokenAmount = qtClaimable.mul(10 ** IMintable(rewardToken).decimals()).div(QUOTA_PRECISION);
+        require( IERC20(rewardToken).balanceOf(address(this)) >= _rewardTokenAmount, "insufficient reward token in contract");
+        IERC20(rewardToken).transfer(_account, _rewardTokenAmount);
+        emit Claim(_account, qtClaimable, _rewardTokenAmount);
     }
 }
 

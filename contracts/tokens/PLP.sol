@@ -44,14 +44,20 @@ contract PLP is IERC20, IPLP, InstStaking {
         require(isMinter[msg.sender], "forbidden");
         _;
     }
+    
+    function setStakingTracker(address _plpStakingTracker) external onlyOwner {
+        plpStakingTracker = _plpStakingTracker;
+    }
 
-    function setMinter(address _minter, bool _isActive) external  onlyOwner {
+    function setMinter(address _minter, bool _isActive) external onlyOwner {
         isMinter[_minter] = _isActive;
     }
 
     function mint(address _account, uint256 _amount) external onlyMinter {
         _mint(_account, _amount);
     }
+
+
 
     function burn(uint256 _amount) external  {
         // _updateRewardsLight(msg.sender);

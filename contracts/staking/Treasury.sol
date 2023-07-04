@@ -14,6 +14,7 @@ import "../tokens/interfaces/IWETH.sol";
 import "./interfaces/IRewardRouter.sol";
 import "./interfaces/IRewardTracker.sol";
 import "../core/interfaces/IPlpManager.sol";
+import "../data/Handler.sol";
 
 
 interface ILPYield {
@@ -23,58 +24,35 @@ interface ILPYield {
 }
 
 
-contract Treasury is Ownable {
+contract Treasury is Ownable, Handler {
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
     using EnumerableValues for EnumerableSet.AddressSet;
     using Address for address payable;
 
-
     mapping(string => address) public addDef;
     mapping(address => address) public plpToPlpManager;
     mapping(address => address) public plpToPlpTracker;
 
-    //distribute setting
+    address public weth;
+
     EnumerableSet.AddressSet supportedToken;
-    uint256 public weight_buy_plp;
-    uint256 public weight_EDPlp;
+    
+    event Receive(address _sender, uint256 _amount);
 
-    bool public openForPublic = true;
-    mapping (address => bool) public isHandler;
-    mapping (address => bool) public isManager;
-
-    event SellESUD(address token, uint256 eusd_amount, uint256 token_out_amount);
-    event Swap(address token_src, address token_dst, uint256 amount_src, uint256 amount_out);
-
-
+    constructor(address _weth) {
+        weth = _weth;
+    }
 
     receive() external payable {
-        // require(msg.sender == weth, "invalid sender");
+        emit Receive(msg.sender, msg.value);
     }
     
-    modifier onlyHandler() {
-        require(isHandler[msg.sender] || msg.sender == owner(), "forbidden");
-        _;
-    }
-    function setManager(address _manager, bool _isActive) external onlyOwner {
-        isManager[_manager] = _isActive;
-    }
-
-    function setHandler(address _handler, bool _isActive) external onlyOwner {
-        isHandler[_handler] = _isActive;
-    }
     function approve(address _token, address _spender, uint256 _amount) external onlyOwner {
         IERC20(_token).approve(_spender, _amount);
     }
 
-    function setOpenstate(bool _state) external onlyOwner {
-        openForPublic = _state;
-    }
-    function setWeights(uint256 _weight_buy_plp, uint256 _weight_EDPlp) external onlyOwner {
-        weight_EDPlp = _weight_EDPlp;
-        weight_buy_plp = _weight_buy_plp;
-    }
     function setRelContract(address[] memory _plp_n, address[] memory _plp_manager, address[] memory _plp_tracker) external onlyOwner{
         for(uint i = 0; i < _plp_n.length; i++){
             if (!supportedToken.contains(_plp_n[i]))
@@ -84,8 +62,7 @@ contract Treasury is Ownable {
         }
     }
 
-
-    function setToken(address[] memory _tokens, bool _state) external onlyOwner{
+    function setToken(address[] memory _tokens, bool _state) external onlyOwner {
         if (_state){
             for(uint i = 0; i < _tokens.length; i++){
                 if (!supportedToken.contains(_tokens[i]))
@@ -109,9 +86,15 @@ contract Treasury is Ownable {
     function withdrawToken(address _token, uint256 _amount, address _dest) external onlyOwner {
         IERC20(_token).safeTransfer(_dest, _amount);
     }
+    function DepositETH(uint256 _value) external onlyOwner {
+        IWETH(weth).deposit{value: _value}();
+    }
+    function sendValue(address payable _receiver, uint256 _amount) external onlyOwner {
+        _receiver.sendValue(_amount);
+    }
+    
 
-    function redeem(address _token, uint256 _amount, address _dest) external {
-        require(isManager[msg.sender], "Only manager");
+    function redeem(address _token, uint256 _amount, address _dest) external onlyManager{
         require(IERC20(_token).balanceOf(address(this)) >= _amount, "max amount exceed");
         IERC20(_token).safeTransfer(_dest, _amount);
     }
@@ -119,15 +102,6 @@ contract Treasury is Ownable {
     function depositNative(uint256 _amount) external payable onlyOwner {
         uint256 _curBalance = address(this).balance;
         IWETH(addDef["nativeToken"]).deposit{value: _amount > _curBalance ? _curBalance : _amount}();
-    }
-
-
-    function treasureSwap(address _src, address _dst, uint256 _amount_in, uint256 _amount_out_min) external onlyHandler returns (uint256) {
-        return _treasureSwap(_src, _dst, _amount_in, _amount_out_min);
-    }
-
-    function _treasureSwap(address _src, address _dst, uint256 _amount_in, uint256 _amount_out_min) internal returns (uint256) {
-        return 0;
     }
 
     // ------ Funcs. processing plp
@@ -176,13 +150,8 @@ contract Treasury is Ownable {
         return token_ret;
     }
 
-
     // Func. public view
     function isSupportedToken(address _token) public view returns(bool){
         return supportedToken.contains(_token);
-    }
-
-    function aum() public pure returns (uint256){
-        return 300000e30;
     }
 }
